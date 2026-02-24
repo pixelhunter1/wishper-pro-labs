@@ -190,6 +190,24 @@ private struct OptionsPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
+                if let confirmation = viewModel.optionsSaveConfirmation {
+                    HStack(spacing: 6) {
+                        Image(systemName: "checkmark.circle.fill")
+                        Text(confirmation)
+                    }
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(.green)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(
+                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                            .fill(Color.green.opacity(0.12))
+                    )
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+                    .animation(.easeInOut(duration: 0.3), value: viewModel.optionsSaveConfirmation)
+                }
+
                 DarkCard {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("API OpenAI")
@@ -274,30 +292,16 @@ private struct OptionsPage: View {
                             .font(.headline)
                             .foregroundStyle(.white)
 
-                        Text(viewModel.modelStatusText)
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.7))
-
-                        TextField("gpt-4o-transcribe", text: $viewModel.transcriptionModelDraft)
-                            .textFieldStyle(.plain)
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
-                            )
-                            .foregroundStyle(.white)
-
-                        HStack(spacing: 10) {
-                            Button("Guardar Modelo") {
-                                viewModel.saveTranscriptionModel()
+                        Picker("Modelo", selection: $viewModel.selectedTranscriptionModel) {
+                            ForEach(TranscriptionModel.allCases) { model in
+                                Text("\(model.displayName) — \(model.subtitle)")
+                                    .tag(model)
                             }
-                            .buttonStyle(.borderedProminent)
-
-                            Button("Repor Padrão") {
-                                viewModel.resetTranscriptionModel()
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.white)
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white)
+                        .onChange(of: viewModel.selectedTranscriptionModel) { _ in
+                            viewModel.onTranscriptionModelChanged()
                         }
                     }
                 }
@@ -310,48 +314,48 @@ private struct OptionsPage: View {
 
                         Toggle("Traduzir automaticamente após transcrição", isOn: $viewModel.translationEnabled)
                             .toggleStyle(.switch)
+                            .onChange(of: viewModel.translationEnabled) { _ in
+                                viewModel.onTranslationSettingsChanged()
+                            }
 
                         HStack(spacing: 10) {
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Língua de origem")
                                     .font(.caption)
                                     .foregroundStyle(Color.white.opacity(0.66))
-                                TextField("Auto / Português / en ...", text: $viewModel.sourceLanguageDraft)
-                                    .textFieldStyle(.plain)
-                                    .padding(10)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(Color.white.opacity(0.08))
-                                    )
-                                    .foregroundStyle(.white)
+                                Picker("Origem", selection: $viewModel.selectedSourceLanguage) {
+                                    ForEach(SupportedLanguage.allCases) { lang in
+                                        Text(lang.displayName).tag(lang)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .tint(.white)
+                                .onChange(of: viewModel.selectedSourceLanguage) { _ in
+                                    viewModel.onTranslationSettingsChanged()
+                                }
                             }
 
                             VStack(alignment: .leading, spacing: 6) {
                                 Text("Língua de destino")
                                     .font(.caption)
                                     .foregroundStyle(Color.white.opacity(0.66))
-                                TextField("Inglês / Francês / es ...", text: $viewModel.targetLanguageDraft)
-                                    .textFieldStyle(.plain)
-                                    .padding(10)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                            .fill(Color.white.opacity(0.08))
-                                    )
-                                    .foregroundStyle(.white)
+                                Picker("Destino", selection: $viewModel.selectedTargetLanguage) {
+                                    ForEach(SupportedLanguage.targetLanguages) { lang in
+                                        Text(lang.displayName).tag(lang)
+                                    }
+                                }
+                                .pickerStyle(.menu)
+                                .tint(.white)
+                                .onChange(of: viewModel.selectedTargetLanguage) { _ in
+                                    viewModel.onTranslationSettingsChanged()
+                                }
                             }
                         }
 
-                        HStack(spacing: 10) {
-                            Button("Guardar Tradução") {
-                                viewModel.saveTranslationSettings()
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Text(viewModel.translationStatusText)
-                                .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.7))
-                                .lineLimit(2)
-                        }
+                        Text(viewModel.translationStatusText)
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.7))
+                            .lineLimit(2)
                     }
                 }
 

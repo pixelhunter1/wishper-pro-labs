@@ -137,7 +137,7 @@ struct OpenAITranscriptionClient {
         body.appendUTF8(
             "Content-Disposition: form-data; name=\"file\"; filename=\"\(fileURL.lastPathComponent)\"\r\n"
         )
-        body.appendUTF8("Content-Type: audio/wav\r\n\r\n")
+        body.appendUTF8("Content-Type: audio/mp4\r\n\r\n")
         body.append(audioData)
         body.appendUTF8("\r\n")
 

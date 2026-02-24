@@ -10,12 +10,10 @@ final class AudioRecorder {
 
         let outputURL = Self.newRecordingURL()
         let settings: [String: Any] = [
-            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: 16_000,
             AVNumberOfChannelsKey: 1,
-            AVLinearPCMBitDepthKey: 16,
-            AVLinearPCMIsBigEndianKey: false,
-            AVLinearPCMIsFloatKey: false,
+            AVEncoderBitRateKey: 32_000,
             AVEncoderAudioQualityKey: AVAudioQuality.high.rawValue,
         ]
 
@@ -54,7 +52,7 @@ final class AudioRecorder {
     private static func newRecordingURL() -> URL {
         FileManager.default.temporaryDirectory
             .appendingPathComponent("wishper-\(UUID().uuidString)")
-            .appendingPathExtension("wav")
+            .appendingPathExtension("m4a")
     }
 }
 
