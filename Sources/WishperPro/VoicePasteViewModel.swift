@@ -179,16 +179,17 @@ final class VoicePasteViewModel: ObservableObject {
 
         setStatus("Pressiona a nova combinação de teclas (Esc para cancelar).", isError: false)
 
-        localCaptureMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        localCaptureMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return event }
             guard self.isCapturingHotkey else { return event }
-            return self.handleCaptureEvent(event, consume: true) ? nil : event
+            _ = self.handleCaptureEvent(event)
+            return event
         }
 
-        globalCaptureMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        globalCaptureMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
             guard let self else { return }
             guard self.isCapturingHotkey else { return }
-            _ = self.handleCaptureEvent(event, consume: false)
+            _ = self.handleCaptureEvent(event)
         }
     }
 
@@ -405,14 +406,33 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
-    private func handleCaptureEvent(_ event: NSEvent, consume: Bool) -> Bool {
-        if event.keyCode == UInt16(kVK_Escape) {
+    private func handleCaptureEvent(_ event: NSEvent) -> Bool {
+        if event.type == .keyDown, event.keyCode == UInt16(kVK_Escape) {
             cancelHotkeyCapture()
             return true
         }
 
+        if event.type == .flagsChanged {
+            guard Self.isModifierKey(event.keyCode) else { return false }
+            guard let modifierMask = Self.modifierMask(for: event.keyCode) else { return false }
+            guard let expectedFlag = Self.primaryModifierFlag(from: modifierMask) else { return false }
+            guard event.modifierFlags.contains(expectedFlag) else { return false }
+
+            let shortcut = HotkeyShortcut(
+                keyCode: UInt32(event.keyCode),
+                modifiers: modifierMask,
+                kind: .modifierOnly
+            )
+            finishHotkeyCapture(shortcut)
+            return true
+        }
+
+        guard event.type == .keyDown else {
+            return false
+        }
+
         if Self.isModifierKey(event.keyCode) {
-            return consume
+            return false
         }
 
         let shortcut = makeShortcut(from: event)
@@ -423,7 +443,8 @@ final class VoicePasteViewModel: ObservableObject {
     private func makeShortcut(from event: NSEvent) -> HotkeyShortcut {
         HotkeyShortcut(
             keyCode: UInt32(event.keyCode),
-            modifiers: carbonModifiers(from: event.modifierFlags)
+            modifiers: carbonModifiers(from: event.modifierFlags),
+            kind: .keyCombo
         )
     }
 
@@ -448,6 +469,29 @@ final class VoicePasteViewModel: ObservableObject {
         default:
             return false
         }
+    }
+
+    private static func modifierMask(for keyCode: UInt16) -> UInt32? {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand:
+            return UInt32(cmdKey)
+        case kVK_Shift, kVK_RightShift:
+            return UInt32(shiftKey)
+        case kVK_Option, kVK_RightOption:
+            return UInt32(optionKey)
+        case kVK_Control, kVK_RightControl:
+            return UInt32(controlKey)
+        default:
+            return nil
+        }
+    }
+
+    private static func primaryModifierFlag(from carbonModifiers: UInt32) -> NSEvent.ModifierFlags? {
+        if carbonModifiers & UInt32(cmdKey) != 0 { return .command }
+        if carbonModifiers & UInt32(optionKey) != 0 { return .option }
+        if carbonModifiers & UInt32(controlKey) != 0 { return .control }
+        if carbonModifiers & UInt32(shiftKey) != 0 { return .shift }
+        return nil
     }
 
     private func stopCaptureMonitors() {

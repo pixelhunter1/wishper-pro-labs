@@ -2,17 +2,34 @@ import AppKit
 import Carbon
 import Foundation
 
+enum HotkeyKind: String, Codable {
+    case keyCombo
+    case modifierOnly
+}
+
 struct HotkeyShortcut: Codable, Equatable {
     let keyCode: UInt32
     let modifiers: UInt32
+    let kind: HotkeyKind
+
+    init(keyCode: UInt32, modifiers: UInt32, kind: HotkeyKind = .keyCombo) {
+        self.keyCode = keyCode
+        self.modifiers = modifiers
+        self.kind = kind
+    }
 
     static let `default` = HotkeyShortcut(
         keyCode: UInt32(kVK_Space),
-        modifiers: UInt32(optionKey)
+        modifiers: UInt32(optionKey),
+        kind: .keyCombo
     )
 
     var label: String {
         HotkeyLabelFormatter.label(for: self)
+    }
+
+    var isModifierOnly: Bool {
+        kind == .modifierOnly
     }
 }
 
@@ -32,6 +49,7 @@ final class GlobalHotkeyMonitor {
     private var activeShortcut: HotkeyShortcut?
     private var onTrigger: (() -> Void)?
     private var lastTriggerTime: Date = .distantPast
+    private var modifierKeyState: [UInt32: Bool] = [:]
     private let debounceWindow: TimeInterval = 0.6
 
     func start(
@@ -41,6 +59,11 @@ final class GlobalHotkeyMonitor {
         stop()
         self.onTrigger = onTrigger
         self.activeShortcut = shortcut
+
+        if shortcut.isModifierOnly {
+            installModifierOnlyMonitors()
+            return .registered(shortcutLabel: shortcut.label)
+        }
 
         var eventType = EventTypeSpec(
             eventClass: OSType(kEventClassKeyboard),
@@ -71,7 +94,7 @@ final class GlobalHotkeyMonitor {
                     return noErr
                 }
 
-                monitor.handleHotKeyEvent(hotKeyID)
+                monitor.handleCarbonHotKeyEvent(hotKeyID)
                 return noErr
             },
             1,
@@ -106,7 +129,6 @@ final class GlobalHotkeyMonitor {
 
         self.hotKeyRef = hotKeyRef
         self.activeHotKeyID = id
-        installFallbackMonitors()
         return .registered(shortcutLabel: shortcut.label)
     }
 
@@ -134,29 +156,70 @@ final class GlobalHotkeyMonitor {
         activeHotKeyID = nil
         activeShortcut = nil
         onTrigger = nil
+        modifierKeyState.removeAll(keepingCapacity: true)
     }
 
-    private func handleHotKeyEvent(_ hotKeyID: EventHotKeyID) {
+    private func installModifierOnlyMonitors() {
+        guard let activeShortcut else { return }
+        guard activeShortcut.isModifierOnly else { return }
+
+        fallbackGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return }
+            guard self.matches(event: event, shortcut: activeShortcut) else { return }
+            self.fireIfNeeded()
+        }
+
+        fallbackLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
+            guard let self else { return event }
+            guard self.matches(event: event, shortcut: activeShortcut) else { return event }
+            self.fireIfNeeded()
+            return event
+        }
+    }
+
+    private func handleCarbonHotKeyEvent(_ hotKeyID: EventHotKeyID) {
         guard hotKeyID.signature == Self.signature else { return }
         guard let activeHotKeyID, hotKeyID.id == activeHotKeyID else { return }
         fireIfNeeded()
     }
 
-    private func installFallbackMonitors() {
-        guard let activeShortcut else { return }
+    private func matches(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
+        if shortcut.isModifierOnly {
+            return matchesModifierOnly(event: event, shortcut: shortcut)
+        }
+        return matchesKeyCombo(event: event, shortcut: shortcut)
+    }
 
-        fallbackGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return }
-            guard Self.matches(event: event, shortcut: activeShortcut) else { return }
-            self.fireIfNeeded()
+    private func matchesKeyCombo(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
+        guard event.type == .keyDown else { return false }
+        guard UInt32(event.keyCode) == shortcut.keyCode else { return false }
+        let normalized = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        let carbon = Self.carbonModifiers(from: normalized)
+        return carbon == shortcut.modifiers
+    }
+
+    private func matchesModifierOnly(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
+        guard event.type == .flagsChanged else { return false }
+        guard UInt32(event.keyCode) == shortcut.keyCode else { return false }
+
+        let expectedFlag = Self.primaryModifierFlag(from: shortcut.modifiers)
+        guard let expectedFlag else { return false }
+
+        let hasExpectedFlag = event.modifierFlags.contains(expectedFlag)
+        let wasPressed = modifierKeyState[shortcut.keyCode] ?? false
+
+        if !wasPressed && hasExpectedFlag {
+            modifierKeyState[shortcut.keyCode] = true
+            return true
         }
 
-        fallbackLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
-            guard let self else { return event }
-            guard Self.matches(event: event, shortcut: activeShortcut) else { return event }
-            self.fireIfNeeded()
-            return nil
+        if wasPressed && !hasExpectedFlag {
+            modifierKeyState[shortcut.keyCode] = false
+        } else if !wasPressed && !hasExpectedFlag {
+            modifierKeyState[shortcut.keyCode] = false
         }
+
+        return false
     }
 
     private func fireIfNeeded() {
@@ -164,16 +227,16 @@ final class GlobalHotkeyMonitor {
         guard now.timeIntervalSince(lastTriggerTime) >= debounceWindow else {
             return
         }
-
         lastTriggerTime = now
         onTrigger?()
     }
 
-    private static func matches(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
-        guard UInt32(event.keyCode) == shortcut.keyCode else { return false }
-        let normalized = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let carbon = carbonModifiers(from: normalized)
-        return carbon == shortcut.modifiers
+    private static func primaryModifierFlag(from carbonModifiers: UInt32) -> NSEvent.ModifierFlags? {
+        if carbonModifiers & UInt32(cmdKey) != 0 { return .command }
+        if carbonModifiers & UInt32(optionKey) != 0 { return .option }
+        if carbonModifiers & UInt32(controlKey) != 0 { return .control }
+        if carbonModifiers & UInt32(shiftKey) != 0 { return .shift }
+        return nil
     }
 
     private static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
@@ -192,6 +255,10 @@ final class GlobalHotkeyMonitor {
 
 private enum HotkeyLabelFormatter {
     static func label(for shortcut: HotkeyShortcut) -> String {
+        if shortcut.isModifierOnly {
+            return keyName(shortcut.keyCode)
+        }
+
         var parts: [String] = []
         if shortcut.modifiers & UInt32(controlKey) != 0 { parts.append("Control") }
         if shortcut.modifiers & UInt32(optionKey) != 0 { parts.append("Option") }
@@ -249,6 +316,14 @@ private enum HotkeyLabelFormatter {
         case kVK_RightArrow: return "Right Arrow"
         case kVK_UpArrow: return "Up Arrow"
         case kVK_DownArrow: return "Down Arrow"
+        case kVK_Command: return "Left Command"
+        case kVK_RightCommand: return "Right Command"
+        case kVK_Shift: return "Left Shift"
+        case kVK_RightShift: return "Right Shift"
+        case kVK_Option: return "Left Option"
+        case kVK_RightOption: return "Right Option"
+        case kVK_Control: return "Left Control"
+        case kVK_RightControl: return "Right Control"
         case kVK_F1: return "F1"
         case kVK_F2: return "F2"
         case kVK_F3: return "F3"
