@@ -378,7 +378,7 @@ private struct OptionsPage: View {
                             .foregroundStyle(.white)
 
                         Picker("Voz", selection: $viewModel.selectedTTSVoice) {
-                            ForEach(TTSVoice.allCases) { voice in
+                            ForEach(viewModel.availableTTSVoices) { voice in
                                 Text("\(voice.displayName) — \(voice.description)")
                                     .tag(voice)
                             }
@@ -386,7 +386,7 @@ private struct OptionsPage: View {
                         .pickerStyle(.menu)
                         .tint(.white)
                         .onChange(of: viewModel.selectedTTSVoice) { _ in
-                            viewModel.onTTSSettingsChanged()
+                            viewModel.onTTSVoiceChanged()
                         }
 
                         Picker("Modelo", selection: $viewModel.selectedTTSModel) {
@@ -398,7 +398,7 @@ private struct OptionsPage: View {
                         .pickerStyle(.menu)
                         .tint(.white)
                         .onChange(of: viewModel.selectedTTSModel) { _ in
-                            viewModel.onTTSSettingsChanged()
+                            viewModel.onTTSModelChanged()
                         }
 
                         Picker("Variante do Português", selection: $viewModel.selectedPortugueseVariant) {

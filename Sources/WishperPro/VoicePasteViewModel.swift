@@ -79,6 +79,10 @@ final class VoicePasteViewModel: ObservableObject {
         "Voz ativa: \(selectedTTSVoice.displayName) (\(selectedTTSModel.subtitle), \(selectedPortugueseVariant.displayName))"
     }
 
+    var availableTTSVoices: [TTSVoice] {
+        selectedTTSModel.supportedVoices
+    }
+
     private let keychain = KeychainService()
     private let recorder = AudioRecorder()
     private let transcriptionClient = OpenAITranscriptionClient()
@@ -184,6 +188,14 @@ final class VoicePasteViewModel: ObservableObject {
         persistTranslationSettings()
     }
 
+    func onTTSVoiceChanged() {
+        onTTSSettingsChanged()
+    }
+
+    func onTTSModelChanged() {
+        onTTSSettingsChanged()
+    }
+
     func pasteAPIKeyFromClipboard() {
         guard let value = NSPasteboard.general.string(forType: .string) else {
             setStatus("A área de transferência está vazia.", isError: true)
@@ -267,6 +279,7 @@ final class VoicePasteViewModel: ObservableObject {
             setStatus("Guarda a API key para usar a voz.", isError: true)
             return
         }
+        normalizeTTSSelection()
         let voice = selectedTTSVoice
         let model = selectedTTSModel
         let portugueseVariant = selectedPortugueseVariant
@@ -328,6 +341,7 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     func onTTSSettingsChanged() {
+        normalizeTTSSelection()
         UserDefaults.standard.set(selectedTTSVoice.rawValue, forKey: Self.ttsVoiceDefaultsKey)
         UserDefaults.standard.set(selectedTTSModel.rawValue, forKey: Self.ttsModelDefaultsKey)
         UserDefaults.standard.set(selectedPortugueseVariant.rawValue, forKey: Self.portugueseVariantDefaultsKey)
@@ -758,6 +772,8 @@ final class VoicePasteViewModel: ObservableObject {
            let variant = PortugueseVariant(rawValue: variantRaw) {
             selectedPortugueseVariant = variant
         }
+
+        normalizeTTSSelection()
     }
 
     private func persistTranscriptionModel(_ model: String) {
@@ -828,6 +844,14 @@ final class VoicePasteViewModel: ObservableObject {
             partialResult + (normalized.contains(marker) ? 1 : 0)
         }
         return hitCount >= 2
+    }
+
+    private func normalizeTTSSelection() {
+        let supportedVoices = selectedTTSModel.supportedVoices
+        guard !supportedVoices.isEmpty else { return }
+        if !supportedVoices.contains(selectedTTSVoice), let fallbackVoice = supportedVoices.first {
+            selectedTTSVoice = fallbackVoice
+        }
     }
 
     private func setStatus(_ message: String, isError: Bool) {

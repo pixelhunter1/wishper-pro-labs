@@ -68,13 +68,17 @@ struct OpenAITTSClient {
 enum TTSVoice: String, CaseIterable, Identifiable, Codable {
     case alloy
     case ash
+    case ballad
     case coral
+    case cedar
     case echo
     case fable
+    case marin
     case onyx
     case nova
     case sage
     case shimmer
+    case verse
 
     var id: String { rawValue }
 
@@ -86,13 +90,17 @@ enum TTSVoice: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .alloy: return "Neutra e equilibrada"
         case .ash: return "Suave e clara"
+        case .ballad: return "Grave e cinematográfica"
         case .coral: return "Quente e expressiva"
+        case .cedar: return "Profunda e premium"
         case .echo: return "Grave e ressonante"
         case .fable: return "Narrativa e envolvente"
+        case .marin: return "Natural e detalhada"
         case .onyx: return "Profunda e autoritária"
         case .nova: return "Enérgica e jovem"
         case .sage: return "Calma e sábia"
         case .shimmer: return "Brilhante e otimista"
+        case .verse: return "Expressiva e envolvente"
         }
     }
 
@@ -109,6 +117,8 @@ enum TTSVoice: String, CaseIterable, Identifiable, Codable {
 enum TTSModel: String, CaseIterable, Identifiable, Codable {
     case tts1 = "tts-1"
     case tts1HD = "tts-1-hd"
+    case gpt4oMiniTTS = "gpt-4o-mini-tts"
+    case gpt4oMiniTTS20251215 = "gpt-4o-mini-tts-2025-12-15"
 
     var id: String { rawValue }
 
@@ -116,6 +126,8 @@ enum TTSModel: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .tts1: return "TTS-1"
         case .tts1HD: return "TTS-1 HD"
+        case .gpt4oMiniTTS: return "GPT-4o Mini TTS"
+        case .gpt4oMiniTTS20251215: return "GPT-4o Mini TTS (2025-12-15)"
         }
     }
 
@@ -123,6 +135,17 @@ enum TTSModel: String, CaseIterable, Identifiable, Codable {
         switch self {
         case .tts1: return "Mais rápido"
         case .tts1HD: return "Alta qualidade"
+        case .gpt4oMiniTTS: return "Mais natural (13 vozes)"
+        case .gpt4oMiniTTS20251215: return "Versão fixa (13 vozes)"
+        }
+    }
+
+    var supportedVoices: [TTSVoice] {
+        switch self {
+        case .tts1, .tts1HD:
+            return [.alloy, .ash, .coral, .echo, .fable, .onyx, .nova, .sage, .shimmer]
+        case .gpt4oMiniTTS, .gpt4oMiniTTS20251215:
+            return TTSVoice.allCases
         }
     }
 }
