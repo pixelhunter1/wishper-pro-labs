@@ -422,6 +422,10 @@ private struct OptionsPage: View {
                                 .foregroundStyle(Color.white.opacity(0.66))
                         }
 
+                        Text("Segundo a OpenAI, as vozes atuais estão otimizadas para inglês.")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.6))
+
                         HStack(spacing: 10) {
                             if viewModel.isLoadingTTS {
                                 ProgressView()

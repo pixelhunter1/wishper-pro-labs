@@ -25,7 +25,7 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var selectedSourceLanguage: SupportedLanguage = .auto
     @Published var selectedTargetLanguage: SupportedLanguage = .english
     @Published var selectedTTSVoice: TTSVoice = .alloy
-    @Published var selectedTTSModel: TTSModel = .tts1
+    @Published var selectedTTSModel: TTSModel = .gpt4oMiniTTS
     @Published var selectedPortugueseVariant: PortugueseVariant = .portugal
     @Published private(set) var isSpeaking = false
     @Published private(set) var isLoadingTTS = false
