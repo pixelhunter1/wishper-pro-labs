@@ -23,9 +23,9 @@ final class FloatingBubbleController: ObservableObject {
     }
 
     private func bindState() {
-        Publishers.CombineLatest(viewModel.$isRecording, viewModel.$isTranscribing)
+        Publishers.CombineLatest3(viewModel.$isRecording, viewModel.$isTranscribing, viewModel.$isSpeaking)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in
+            .sink { [weak self] _, _, _ in
                 self?.updateVisibility()
             }
             .store(in: &cancellables)
@@ -47,7 +47,7 @@ final class FloatingBubbleController: ObservableObject {
 
     private func updateVisibility() {
         guard let panel else { return }
-        let shouldShow = (viewModel.isRecording || viewModel.isTranscribing) && !NSApp.isActive
+        let shouldShow = viewModel.isRecording || viewModel.isTranscribing || viewModel.isSpeaking
         if shouldShow {
             positionPanel(panel)
             panel.orderFrontRegardless()
@@ -85,7 +85,9 @@ final class FloatingBubbleController: ObservableObject {
     }
 
     private func positionPanel(_ panel: NSPanel) {
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
+        let mouseLocation = NSEvent.mouseLocation
+        let targetScreen = NSScreen.screens.first { NSMouseInRect(mouseLocation, $0.frame, false) }
+        guard let screen = targetScreen ?? NSScreen.main ?? NSScreen.screens.first else { return }
         let visibleFrame = screen.visibleFrame
         let width = panel.frame.width
         let height = panel.frame.height
