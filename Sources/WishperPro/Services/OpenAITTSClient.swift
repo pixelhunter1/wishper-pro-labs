@@ -96,8 +96,13 @@ enum TTSVoice: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    var previewText: String {
-        "Olá, eu sou a voz \(displayName). Assim é como eu soo quando leio um texto para ti."
+    func previewText(for portugueseVariant: PortugueseVariant) -> String {
+        switch portugueseVariant {
+        case .portugal:
+            return "Olá, sou a voz \(displayName). Esta é a minha forma de falar quando leio um texto para ti."
+        case .brazil:
+            return "Olá, eu sou a voz \(displayName). Assim é como eu soo quando leio um texto para você."
+        }
     }
 }
 

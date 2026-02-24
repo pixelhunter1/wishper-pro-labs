@@ -401,6 +401,17 @@ private struct OptionsPage: View {
                             viewModel.onTTSSettingsChanged()
                         }
 
+                        Picker("Variante do Português", selection: $viewModel.selectedPortugueseVariant) {
+                            ForEach(PortugueseVariant.allCases) { variant in
+                                Text(variant.displayName).tag(variant)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white)
+                        .onChange(of: viewModel.selectedPortugueseVariant) { _ in
+                            viewModel.onPortugueseVariantChanged()
+                        }
+
                         HStack(spacing: 10) {
                             if viewModel.isLoadingTTS {
                                 ProgressView()

@@ -26,6 +26,7 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var selectedTargetLanguage: SupportedLanguage = .english
     @Published var selectedTTSVoice: TTSVoice = .alloy
     @Published var selectedTTSModel: TTSModel = .tts1
+    @Published var selectedPortugueseVariant: PortugueseVariant = .portugal
     @Published private(set) var isSpeaking = false
     @Published private(set) var isLoadingTTS = false
 
@@ -71,11 +72,11 @@ final class VoicePasteViewModel: ObservableObject {
         guard translationEnabled else {
             return "Tradução desativada."
         }
-        return "Traduzir de \(selectedSourceLanguage.displayName) para \(selectedTargetLanguage.displayName)."
+        return "Traduzir de \(languageDisplayName(selectedSourceLanguage)) para \(languageDisplayName(selectedTargetLanguage))."
     }
 
     var ttsStatusText: String {
-        "Voz ativa: \(selectedTTSVoice.displayName) (\(selectedTTSModel.subtitle))"
+        "Voz ativa: \(selectedTTSVoice.displayName) (\(selectedTTSModel.subtitle), \(selectedPortugueseVariant.displayName))"
     }
 
     private let keychain = KeychainService()
@@ -102,6 +103,7 @@ final class VoicePasteViewModel: ObservableObject {
     private static let translationTargetDefaultsKey = "wishper.translation_target_language"
     private static let ttsVoiceDefaultsKey = "wishper.tts_voice"
     private static let ttsModelDefaultsKey = "wishper.tts_model"
+    private static let portugueseVariantDefaultsKey = "wishper.portuguese_variant"
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -174,6 +176,11 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     func onTranslationSettingsChanged() {
+        persistTranslationSettings()
+    }
+
+    func onPortugueseVariantChanged() {
+        onTTSSettingsChanged()
         persistTranslationSettings()
     }
 
@@ -262,12 +269,18 @@ final class VoicePasteViewModel: ObservableObject {
         }
         let voice = selectedTTSVoice
         let model = selectedTTSModel
+        let portugueseVariant = selectedPortugueseVariant
         isLoadingTTS = true
         ttsTask = Task { [weak self] in
             guard let self else { return }
             do {
+                let speechText = await self.speechTextForTTS(
+                    from: text,
+                    apiKey: apiKey,
+                    portugueseVariant: portugueseVariant
+                )
                 let audioData = try await self.ttsClient.synthesize(
-                    text: text,
+                    text: speechText,
                     apiKey: apiKey,
                     voice: voice,
                     model: model
@@ -302,7 +315,7 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     func previewTTSVoice(_ voice: TTSVoice) {
-        speakText(voice.previewText)
+        speakText(voice.previewText(for: selectedPortugueseVariant))
     }
 
     func stopSpeaking() {
@@ -317,6 +330,7 @@ final class VoicePasteViewModel: ObservableObject {
     func onTTSSettingsChanged() {
         UserDefaults.standard.set(selectedTTSVoice.rawValue, forKey: Self.ttsVoiceDefaultsKey)
         UserDefaults.standard.set(selectedTTSModel.rawValue, forKey: Self.ttsModelDefaultsKey)
+        UserDefaults.standard.set(selectedPortugueseVariant.rawValue, forKey: Self.portugueseVariantDefaultsKey)
     }
 
     func toggleRecordingFromButton() {
@@ -739,6 +753,11 @@ final class VoicePasteViewModel: ObservableObject {
            let model = TTSModel(rawValue: modelRaw) {
             selectedTTSModel = model
         }
+
+        if let variantRaw = UserDefaults.standard.string(forKey: Self.portugueseVariantDefaultsKey),
+           let variant = PortugueseVariant(rawValue: variantRaw) {
+            selectedPortugueseVariant = variant
+        }
     }
 
     private func persistTranscriptionModel(_ model: String) {
@@ -754,13 +773,61 @@ final class VoicePasteViewModel: ObservableObject {
     private func currentTranslationRequest() -> TranslationRequest? {
         guard translationEnabled else { return nil }
         return TranslationRequest(
-            sourceLanguage: selectedSourceLanguage.displayName,
-            targetLanguage: selectedTargetLanguage.displayName
+            sourceLanguage: languageDisplayName(selectedSourceLanguage),
+            targetLanguage: languageDisplayName(selectedTargetLanguage)
         )
     }
 
     private func transcriptionLanguageHint() -> String? {
-        selectedSourceLanguage.isoCode
+        if selectedSourceLanguage == .portuguese {
+            return selectedPortugueseVariant.transcriptionLanguageHint
+        }
+        return selectedSourceLanguage.isoCode
+    }
+
+    private func languageDisplayName(_ language: SupportedLanguage) -> String {
+        if language == .portuguese {
+            return selectedPortugueseVariant.translationDisplayName
+        }
+        return language.displayName
+    }
+
+    private func speechTextForTTS(
+        from text: String,
+        apiKey: String,
+        portugueseVariant: PortugueseVariant
+    ) async -> String {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return text }
+        guard shouldNormalizePortugueseForSpeech(trimmed) else {
+            return trimmed
+        }
+
+        do {
+            return try await translationClient.translate(
+                text: trimmed,
+                sourceLanguage: "Português",
+                targetLanguage: portugueseVariant.translationDisplayName,
+                apiKey: apiKey
+            )
+        } catch {
+            return trimmed
+        }
+    }
+
+    private func shouldNormalizePortugueseForSpeech(_ text: String) -> Bool {
+        if selectedSourceLanguage == .portuguese { return true }
+        if translationEnabled && selectedTargetLanguage == .portuguese { return true }
+        return Self.looksLikePortuguese(text)
+    }
+
+    private static func looksLikePortuguese(_ text: String) -> Bool {
+        let normalized = " \(text.lowercased()) "
+        let markers = [" não ", " que ", " para ", " com ", " uma ", " está ", "ção", "ções", "ões", "lh", "nh"]
+        let hitCount = markers.reduce(0) { partialResult, marker in
+            partialResult + (normalized.contains(marker) ? 1 : 0)
+        }
+        return hitCount >= 2
     }
 
     private func setStatus(_ message: String, isError: Bool) {
@@ -777,6 +844,31 @@ final class VoicePasteViewModel: ObservableObject {
     private enum TriggerOrigin {
         case button
         case hotkey
+    }
+}
+
+enum PortugueseVariant: String, CaseIterable, Identifiable {
+    case portugal = "pt-PT"
+    case brazil = "pt-BR"
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .portugal: return "Português (Portugal)"
+        case .brazil: return "Português (Brasil)"
+        }
+    }
+
+    var translationDisplayName: String {
+        switch self {
+        case .portugal: return "Português de Portugal"
+        case .brazil: return "Português do Brasil"
+        }
+    }
+
+    var transcriptionLanguageHint: String {
+        "pt"
     }
 }
 
