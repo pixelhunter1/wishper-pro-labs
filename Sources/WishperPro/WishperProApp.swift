@@ -2,10 +2,13 @@ import SwiftUI
 
 @main
 struct WishperProApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel: VoicePasteViewModel
     @StateObject private var floatingBubbleController: FloatingBubbleController
 
     init() {
+        NSApplication.shared.setActivationPolicy(.regular)
+
         let viewModel = VoicePasteViewModel()
         _viewModel = StateObject(wrappedValue: viewModel)
         _floatingBubbleController = StateObject(
@@ -22,5 +25,19 @@ struct WishperProApp: App {
                 }
         }
         .windowResizability(.contentSize)
+    }
+}
+
+final class AppDelegate: NSObject, NSApplicationDelegate {
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.regular)
+        NSApp.activate(ignoringOtherApps: true)
+
+        DispatchQueue.main.async {
+            for window in NSApp.windows where window.canBecomeKey {
+                window.makeKeyAndOrderFront(nil)
+                break
+            }
+        }
     }
 }

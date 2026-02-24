@@ -8,11 +8,14 @@ App nativa em Swift para ditado com OpenAI, sem login, com auto-paste no campo a
 - Grava áudio do microfone.
 - Envia para `POST /v1/audio/transcriptions` da OpenAI.
 - Recebe texto transcrito e cola automaticamente onde o cursor de texto estiver ativo.
+- Tradução opcional após transcrição (ex.: Português -> qualquer língua definida nas Opções).
+- Modelo OpenAI de transcrição configurável pelo utilizador (com padrão recomendado).
 - Atalho global: `Option + Space` para iniciar/parar.
 - Atalho push-to-talk totalmente configurável nas Opções (captura direta de teclado, com persistência local).
 - Bubble dinâmico `150x50` com estado de voz (`A ouvir`, `A falar`, `A transcrever`).
 - Bubble flutuante no desktop durante gravação/transcrição, mesmo com janela principal minimizada.
 - Bip no início e no fim da gravação.
+- Retry automático e timeout maior na transcrição para reduzir falhas ocasionais.
 - API key guardada localmente no macOS Keychain.
 - Não há base de dados de transcrições; a transcrição anterior é limpa ao iniciar nova fala.
 
@@ -25,9 +28,18 @@ App nativa em Swift para ditado com OpenAI, sem login, com auto-paste no campo a
 ## Instalação
 
 ```bash
-swift build
-swift run WishperPro
+./scripts/install-local-release.sh
 ```
+
+Isto compila `release`, assina com o teu certificado Apple Development (se existir) e instala em `~/Applications/Wishper Pro.app`.
+
+## Desenvolvimento (sem `swift run`)
+
+```bash
+./scripts/run-dev-app.sh
+```
+
+Este comando cria uma app dev em `/tmp/Wishper Pro Dev.app` com `Info.plist` e assinatura, evitando os bloqueios de interação que podem acontecer com `swift run` (binário sem bundle ID).
 
 ## Primeira configuração
 

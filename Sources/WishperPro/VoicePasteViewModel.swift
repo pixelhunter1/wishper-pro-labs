@@ -19,6 +19,11 @@ final class VoicePasteViewModel: ObservableObject {
     @Published private(set) var hotkeyLabel = "Option + Space"
     @Published private(set) var isHotkeyReady = false
     @Published private(set) var isCapturingHotkey = false
+    @Published var transcriptionModelDraft = "gpt-4o-transcribe"
+    @Published private(set) var activeTranscriptionModel = "gpt-4o-transcribe"
+    @Published var translationEnabled = false
+    @Published var sourceLanguageDraft = "Auto"
+    @Published var targetLanguageDraft = "Inglês"
 
     var keyStatusText: String {
         isAPIKeySaved
@@ -54,9 +59,21 @@ final class VoicePasteViewModel: ObservableObject {
         return "aguardando"
     }
 
+    var modelStatusText: String {
+        "Modelo ativo: \(activeTranscriptionModel)"
+    }
+
+    var translationStatusText: String {
+        guard translationEnabled else {
+            return "Tradução desativada."
+        }
+        return "Traduzir de \(sourceLanguageDraft) para \(targetLanguageDraft)."
+    }
+
     private let keychain = KeychainService()
     private let recorder = AudioRecorder()
     private let transcriptionClient = OpenAITranscriptionClient()
+    private let translationClient = OpenAITranslationClient()
     private let autoPaster = AutoPaster()
     private let hotkeyMonitor = GlobalHotkeyMonitor()
     private let soundCuePlayer = SoundCuePlayer()
@@ -68,6 +85,13 @@ final class VoicePasteViewModel: ObservableObject {
     private var globalCaptureMonitor: Any?
     private var hotkeySuspendedForCapture = false
     private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey_data"
+    private static let transcriptionModelDefaultsKey = "wishper.transcription_model"
+    private static let translationEnabledDefaultsKey = "wishper.translation_enabled"
+    private static let translationSourceDefaultsKey = "wishper.translation_source_language"
+    private static let translationTargetDefaultsKey = "wishper.translation_target_language"
+    private static let defaultTranscriptionModel = "gpt-4o-transcribe"
+    private static let defaultSourceLanguage = "Auto"
+    private static let defaultTargetLanguage = "Inglês"
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -77,6 +101,7 @@ final class VoicePasteViewModel: ObservableObject {
         }
 
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
+        loadPersistedSettings()
 
         let preferredShortcut = loadPersistedHotkey() ?? .default
 
@@ -131,6 +156,49 @@ final class VoicePasteViewModel: ObservableObject {
             setStatus("API key removida.", isError: false)
         } catch {
             setStatus(error.localizedDescription, isError: true)
+        }
+    }
+
+    func saveTranscriptionModel() {
+        let trimmedModel = transcriptionModelDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedModel.isEmpty else {
+            setStatus("Define um modelo OpenAI válido.", isError: true)
+            return
+        }
+
+        activeTranscriptionModel = trimmedModel
+        transcriptionModelDraft = trimmedModel
+        persistTranscriptionModel(trimmedModel)
+        setStatus("Modelo de transcrição atualizado para \(trimmedModel).", isError: false)
+    }
+
+    func resetTranscriptionModel() {
+        activeTranscriptionModel = Self.defaultTranscriptionModel
+        transcriptionModelDraft = Self.defaultTranscriptionModel
+        persistTranscriptionModel(Self.defaultTranscriptionModel)
+        setStatus("Modelo reposto para \(Self.defaultTranscriptionModel).", isError: false)
+    }
+
+    func saveTranslationSettings() {
+        let normalizedSource = normalizedSourceLanguage(sourceLanguageDraft)
+        let normalizedTarget = targetLanguageDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+
+        if translationEnabled && normalizedTarget.isEmpty {
+            setStatus("Define a língua de destino para ativar tradução.", isError: true)
+            return
+        }
+
+        sourceLanguageDraft = normalizedSource
+        targetLanguageDraft = normalizedTarget.isEmpty ? Self.defaultTargetLanguage : normalizedTarget
+        persistTranslationSettings()
+
+        if translationEnabled {
+            setStatus(
+                "Tradução ativa: \(sourceLanguageDraft) -> \(targetLanguageDraft).",
+                isError: false
+            )
+        } else {
+            setStatus("Tradução desativada.", isError: false)
         }
     }
 
@@ -297,10 +365,15 @@ final class VoicePasteViewModel: ObservableObject {
                     throw VoicePasteError.missingAPIKey
                 }
 
+                let model = await MainActor.run(body: { self.activeTranscriptionModel })
+                let languageHint = await MainActor.run(body: { self.transcriptionLanguageHint() })
                 let transcript = try await self.transcriptionClient.transcribeAudio(
                     fileURL: recordingURL,
                     apiKey: apiKey,
-                    timeoutSeconds: 30
+                    model: model,
+                    languageHint: languageHint,
+                    timeoutSeconds: 75,
+                    maxRetries: 1
                 )
                 try Task.checkCancellation()
 
@@ -309,14 +382,45 @@ final class VoicePasteViewModel: ObservableObject {
                     throw VoicePasteError.emptyTranscription
                 }
 
+                var outputText = cleanTranscript
+                var translationRequested = false
+                var translationFailedMessage: String?
+                let translationRequest = await MainActor.run(body: { self.currentTranslationRequest() })
+                if let translationRequest {
+                    translationRequested = true
+                    await MainActor.run {
+                        self.setStatus("A traduzir para \(translationRequest.targetLanguage)...", isError: false)
+                    }
+                    do {
+                        outputText = try await self.translationClient.translate(
+                            text: cleanTranscript,
+                            sourceLanguage: translationRequest.sourceLanguage,
+                            targetLanguage: translationRequest.targetLanguage,
+                            apiKey: apiKey
+                        )
+                    } catch {
+                        translationFailedMessage = error.localizedDescription
+                    }
+                }
+
                 await MainActor.run {
-                    self.lastTranscript = cleanTranscript
+                    self.lastTranscript = outputText
                 }
 
                 let shouldAutoPaste = await MainActor.run(body: { self.autoPasteEnabled })
                 guard shouldAutoPaste else {
                     await MainActor.run {
-                        self.setStatus("Transcrição concluída.", isError: false)
+                        if let translationFailedMessage {
+                            self.setStatus(
+                                "Transcrição concluída. Tradução falhou: \(translationFailedMessage)",
+                                isError: true
+                            )
+                        } else {
+                            self.setStatus(
+                                translationRequested ? "Transcrição e tradução concluídas." : "Transcrição concluída.",
+                                isError: false
+                            )
+                        }
                     }
                     return
                 }
@@ -327,16 +431,37 @@ final class VoicePasteViewModel: ObservableObject {
                 }
 
                 if hasPermission {
-                    try autoPaster.paste(text: cleanTranscript)
+                    try autoPaster.paste(text: outputText)
                     await MainActor.run {
-                        self.setStatus("Transcrição colada no campo ativo.", isError: false)
+                        if let translationFailedMessage {
+                            self.setStatus(
+                                "Transcrição colada. Tradução falhou: \(translationFailedMessage)",
+                                isError: true
+                            )
+                        } else {
+                            self.setStatus(
+                                translationRequested
+                                    ? "Transcrição traduzida e colada no campo ativo."
+                                    : "Transcrição colada no campo ativo.",
+                                isError: false
+                            )
+                        }
                     }
                 } else {
                     await MainActor.run {
-                        self.setStatus(
-                            "Transcrição pronta, mas falta permissão de Accessibilidade para colar.",
-                            isError: true
-                        )
+                        if let translationFailedMessage {
+                            self.setStatus(
+                                "Transcrição pronta. Tradução falhou: \(translationFailedMessage)",
+                                isError: true
+                            )
+                        } else {
+                            self.setStatus(
+                                translationRequested
+                                    ? "Tradução pronta, mas falta permissão de Accessibilidade para colar."
+                                    : "Transcrição pronta, mas falta permissão de Accessibilidade para colar.",
+                                isError: true
+                            )
+                        }
                     }
                 }
             } catch is CancellationError {
@@ -545,9 +670,115 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
+    private func loadPersistedSettings() {
+        if let model = UserDefaults.standard.string(forKey: Self.transcriptionModelDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines),
+           !model.isEmpty {
+            activeTranscriptionModel = model
+            transcriptionModelDraft = model
+        } else {
+            activeTranscriptionModel = Self.defaultTranscriptionModel
+            transcriptionModelDraft = Self.defaultTranscriptionModel
+        }
+
+        if UserDefaults.standard.object(forKey: Self.translationEnabledDefaultsKey) != nil {
+            translationEnabled = UserDefaults.standard.bool(forKey: Self.translationEnabledDefaultsKey)
+        } else {
+            translationEnabled = false
+        }
+
+        let persistedSource = UserDefaults.standard.string(forKey: Self.translationSourceDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        sourceLanguageDraft = normalizedSourceLanguage(persistedSource ?? Self.defaultSourceLanguage)
+
+        let persistedTarget = UserDefaults.standard.string(forKey: Self.translationTargetDefaultsKey)?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if let persistedTarget, !persistedTarget.isEmpty {
+            targetLanguageDraft = persistedTarget
+        } else {
+            targetLanguageDraft = Self.defaultTargetLanguage
+        }
+    }
+
+    private func persistTranscriptionModel(_ model: String) {
+        UserDefaults.standard.set(model, forKey: Self.transcriptionModelDefaultsKey)
+    }
+
+    private func persistTranslationSettings() {
+        UserDefaults.standard.set(translationEnabled, forKey: Self.translationEnabledDefaultsKey)
+        UserDefaults.standard.set(sourceLanguageDraft, forKey: Self.translationSourceDefaultsKey)
+        UserDefaults.standard.set(targetLanguageDraft, forKey: Self.translationTargetDefaultsKey)
+    }
+
+    private func currentTranslationRequest() -> TranslationRequest? {
+        guard translationEnabled else {
+            return nil
+        }
+
+        let source = normalizedSourceLanguage(sourceLanguageDraft)
+        let target = targetLanguageDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !target.isEmpty else {
+            return nil
+        }
+
+        return TranslationRequest(sourceLanguage: source, targetLanguage: target)
+    }
+
+    private func transcriptionLanguageHint() -> String? {
+        let source = normalizedSourceLanguage(sourceLanguageDraft)
+        return Self.languageHintCode(from: source)
+    }
+
+    private func normalizedSourceLanguage(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? Self.defaultSourceLanguage : trimmed
+    }
+
+    private static func languageHintCode(from value: String) -> String? {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+
+        let normalized = trimmed.folding(options: [.diacriticInsensitive, .caseInsensitive], locale: .current)
+            .lowercased()
+        if normalized == "auto" {
+            return nil
+        }
+
+        switch normalized {
+        case "portugues", "portuguese", "pt", "pt-pt", "pt-br":
+            return "pt"
+        case "english", "ingles", "en", "en-us", "en-gb":
+            return "en"
+        case "espanhol", "spanish", "es", "es-es", "es-mx":
+            return "es"
+        case "frances", "french", "fr", "fr-fr":
+            return "fr"
+        case "alemao", "german", "de", "de-de":
+            return "de"
+        case "italiano", "italian", "it", "it-it":
+            return "it"
+        default:
+            break
+        }
+
+        if trimmed.range(
+            of: #"^[a-z]{2}(-[a-z]{2})?$"#,
+            options: [.regularExpression, .caseInsensitive]
+        ) != nil {
+            return trimmed.lowercased()
+        }
+
+        return nil
+    }
+
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         isStatusError = isError
+    }
+
+    private struct TranslationRequest {
+        let sourceLanguage: String
+        let targetLanguage: String
     }
 
     private enum TriggerOrigin {

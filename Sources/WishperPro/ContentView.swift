@@ -26,7 +26,23 @@ struct ContentView: View {
     @State private var selectedSection: AppSection = .home
 
     var body: some View {
-        ZStack {
+        VStack(alignment: .leading, spacing: 18) {
+            header
+            sectionSwitcher
+
+            Group {
+                switch selectedSection {
+                case .home:
+                    HomePage(viewModel: viewModel)
+                case .options:
+                    OptionsPage(viewModel: viewModel)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(
             LinearGradient(
                 colors: [
                     Color(red: 0.08, green: 0.09, blue: 0.12),
@@ -36,23 +52,7 @@ struct ContentView: View {
                 endPoint: .bottomTrailing
             )
             .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 18) {
-                header
-                sectionSwitcher
-
-                Group {
-                    switch selectedSection {
-                    case .home:
-                        HomePage(viewModel: viewModel)
-                    case .options:
-                        OptionsPage(viewModel: viewModel)
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
-            .padding(20)
-        }
+        )
         .preferredColorScheme(.dark)
     }
 
@@ -104,6 +104,7 @@ struct ContentView: View {
         }
     }
 }
+
 
 private struct HomePage: View {
     @ObservedObject var viewModel: VoicePasteViewModel
@@ -264,6 +265,93 @@ private struct OptionsPage: View {
                         Text(viewModel.hotkeyCaptureHint)
                             .font(.caption)
                             .foregroundStyle(Color.white.opacity(0.66))
+                    }
+                }
+
+                DarkCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Modelo de Transcrição")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+
+                        Text(viewModel.modelStatusText)
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.7))
+
+                        TextField("gpt-4o-transcribe", text: $viewModel.transcriptionModelDraft)
+                            .textFieldStyle(.plain)
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                    .fill(Color.white.opacity(0.08))
+                            )
+                            .foregroundStyle(.white)
+
+                        HStack(spacing: 10) {
+                            Button("Guardar Modelo") {
+                                viewModel.saveTranscriptionModel()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Button("Repor Padrão") {
+                                viewModel.resetTranscriptionModel()
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.white)
+                        }
+                    }
+                }
+
+                DarkCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Tradução")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+
+                        Toggle("Traduzir automaticamente após transcrição", isOn: $viewModel.translationEnabled)
+                            .toggleStyle(.switch)
+
+                        HStack(spacing: 10) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Língua de origem")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.white.opacity(0.66))
+                                TextField("Auto / Português / en ...", text: $viewModel.sourceLanguageDraft)
+                                    .textFieldStyle(.plain)
+                                    .padding(10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.white.opacity(0.08))
+                                    )
+                                    .foregroundStyle(.white)
+                            }
+
+                            VStack(alignment: .leading, spacing: 6) {
+                                Text("Língua de destino")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.white.opacity(0.66))
+                                TextField("Inglês / Francês / es ...", text: $viewModel.targetLanguageDraft)
+                                    .textFieldStyle(.plain)
+                                    .padding(10)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                            .fill(Color.white.opacity(0.08))
+                                    )
+                                    .foregroundStyle(.white)
+                            }
+                        }
+
+                        HStack(spacing: 10) {
+                            Button("Guardar Tradução") {
+                                viewModel.saveTranslationSettings()
+                            }
+                            .buttonStyle(.borderedProminent)
+
+                            Text(viewModel.translationStatusText)
+                                .font(.caption)
+                                .foregroundStyle(Color.white.opacity(0.7))
+                                .lineLimit(2)
+                        }
                     }
                 }
 

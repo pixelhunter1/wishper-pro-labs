@@ -7,7 +7,42 @@ struct OpenAITranscriptionClient {
         fileURL: URL,
         apiKey: String,
         model: String = "gpt-4o-transcribe",
-        timeoutSeconds: TimeInterval = 30
+        languageHint: String? = nil,
+        timeoutSeconds: TimeInterval = 75,
+        maxRetries: Int = 1
+    ) async throws -> String {
+        let retryCount = max(0, maxRetries)
+        var lastError: Error?
+
+        for attempt in 0...retryCount {
+            do {
+                return try await transcribeOnce(
+                    fileURL: fileURL,
+                    apiKey: apiKey,
+                    model: model,
+                    languageHint: languageHint,
+                    timeoutSeconds: timeoutSeconds
+                )
+            } catch {
+                lastError = error
+                let canRetry = shouldRetry(error) && attempt < retryCount
+                guard canRetry else {
+                    throw error
+                }
+
+                try? await Task.sleep(for: .milliseconds(650 * (attempt + 1)))
+            }
+        }
+
+        throw lastError ?? OpenAITranscriptionError.invalidServerResponse
+    }
+
+    private func transcribeOnce(
+        fileURL: URL,
+        apiKey: String,
+        model: String,
+        languageHint: String?,
+        timeoutSeconds: TimeInterval
     ) async throws -> String {
         let boundary = "Boundary-\(UUID().uuidString)"
         var request = URLRequest(url: endpoint)
@@ -19,7 +54,8 @@ struct OpenAITranscriptionClient {
         let body = try makeMultipartBody(
             fileURL: fileURL,
             boundary: boundary,
-            model: model
+            model: model,
+            languageHint: languageHint
         )
 
         let (data, response): (Data, URLResponse)
@@ -36,21 +72,45 @@ struct OpenAITranscriptionClient {
 
         guard (200..<300).contains(httpResponse.statusCode) else {
             if let payload = try? JSONDecoder().decode(OpenAIErrorPayload.self, from: data) {
-                throw OpenAITranscriptionError.api(payload.error.message)
+                throw OpenAITranscriptionError.api(
+                    statusCode: httpResponse.statusCode,
+                    message: payload.error.message
+                )
             }
 
             let fallbackMessage = String(data: data, encoding: .utf8) ?? "Erro de API sem detalhe."
-            throw OpenAITranscriptionError.api(fallbackMessage)
+            throw OpenAITranscriptionError.api(
+                statusCode: httpResponse.statusCode,
+                message: fallbackMessage
+            )
         }
 
         let parsed = try JSONDecoder().decode(TranscriptionPayload.self, from: data)
         return parsed.text
     }
 
+    private func shouldRetry(_ error: Error) -> Bool {
+        if let transcriptionError = error as? OpenAITranscriptionError {
+            return transcriptionError.isRetryable
+        }
+
+        if let urlError = error as? URLError {
+            switch urlError.code {
+            case .timedOut, .networkConnectionLost, .cannotConnectToHost, .notConnectedToInternet:
+                return true
+            default:
+                return false
+            }
+        }
+
+        return false
+    }
+
     private func makeMultipartBody(
         fileURL: URL,
         boundary: String,
-        model: String
+        model: String,
+        languageHint: String?
     ) throws -> Data {
         let audioData = try Data(contentsOf: fileURL)
         guard !audioData.isEmpty else {
@@ -65,6 +125,13 @@ struct OpenAITranscriptionClient {
         body.appendUTF8("--\(boundary)\r\n")
         body.appendUTF8("Content-Disposition: form-data; name=\"response_format\"\r\n\r\n")
         body.appendUTF8("json\r\n")
+
+        if let languageHint = languageHint?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !languageHint.isEmpty {
+            body.appendUTF8("--\(boundary)\r\n")
+            body.appendUTF8("Content-Disposition: form-data; name=\"language\"\r\n\r\n")
+            body.appendUTF8("\(languageHint)\r\n")
+        }
 
         body.appendUTF8("--\(boundary)\r\n")
         body.appendUTF8(
@@ -95,7 +162,18 @@ private enum OpenAITranscriptionError: LocalizedError {
     case emptyAudio
     case invalidServerResponse
     case timeout
-    case api(String)
+    case api(statusCode: Int, message: String)
+
+    var isRetryable: Bool {
+        switch self {
+        case .timeout:
+            return true
+        case .api(let statusCode, _):
+            return statusCode == 429 || statusCode >= 500
+        default:
+            return false
+        }
+    }
 
     var errorDescription: String? {
         switch self {
@@ -105,8 +183,8 @@ private enum OpenAITranscriptionError: LocalizedError {
             return "Resposta inválida da OpenAI."
         case .timeout:
             return "A transcrição demorou demasiado tempo. Tenta novamente."
-        case .api(let message):
-            return "Erro OpenAI: \(message)"
+        case .api(let statusCode, let message):
+            return "Erro OpenAI (\(statusCode)): \(message)"
         }
     }
 }

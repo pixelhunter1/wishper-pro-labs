@@ -29,11 +29,25 @@ final class FloatingBubbleController: ObservableObject {
                 self?.updateVisibility()
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateVisibility()
+            }
+            .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: NSApplication.didResignActiveNotification)
+            .receive(on: RunLoop.main)
+            .sink { [weak self] _ in
+                self?.updateVisibility()
+            }
+            .store(in: &cancellables)
     }
 
     private func updateVisibility() {
         guard let panel else { return }
-        let shouldShow = viewModel.isRecording || viewModel.isTranscribing
+        let shouldShow = (viewModel.isRecording || viewModel.isTranscribing) && !NSApp.isActive
         if shouldShow {
             positionPanel(panel)
             panel.orderFrontRegardless()
