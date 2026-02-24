@@ -20,6 +20,7 @@ final class AudioRecorder {
         ]
 
         let recorder = try AVAudioRecorder(url: outputURL, settings: settings)
+        recorder.isMeteringEnabled = true
         guard recorder.prepareToRecord(), recorder.record() else {
             throw AudioRecorderError.startFailed
         }
@@ -36,6 +37,18 @@ final class AudioRecorder {
         recorder.stop()
         self.recorder = nil
         return outputURL
+    }
+
+    func currentAudioLevel() -> Double {
+        guard let recorder, recorder.isRecording else { return 0 }
+        recorder.updateMeters()
+
+        let averagePower = recorder.averagePower(forChannel: 0)
+        let minDb: Float = -55
+        guard averagePower > minDb else { return 0 }
+
+        let normalized = (averagePower - minDb) / abs(minDb)
+        return min(max(Double(normalized), 0), 1)
     }
 
     private static func newRecordingURL() -> URL {
