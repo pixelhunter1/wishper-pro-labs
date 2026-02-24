@@ -9,6 +9,7 @@ struct OpenAITranscriptionResult {
 struct OpenAITranscriptionMetrics {
     let model: String
     let languageHint: String?
+    let prompt: String?
     let audioBytes: Int
     let audioDurationSeconds: TimeInterval?
     let totalElapsedSeconds: TimeInterval
@@ -31,6 +32,7 @@ struct OpenAITranscriptionClient {
         apiKey: String,
         model: String = "gpt-4o-transcribe",
         languageHint: String? = nil,
+        prompt: String? = nil,
         timeoutSeconds: TimeInterval = 75,
         maxRetries: Int = 1
     ) async throws -> OpenAITranscriptionResult {
@@ -54,6 +56,7 @@ struct OpenAITranscriptionClient {
                     apiKey: apiKey,
                     model: model,
                     languageHint: languageHint,
+                    prompt: prompt,
                     timeoutSeconds: timeoutSeconds
                 )
                 attempts.append(
@@ -71,6 +74,7 @@ struct OpenAITranscriptionClient {
                     metrics: OpenAITranscriptionMetrics(
                         model: model,
                         languageHint: languageHint,
+                        prompt: prompt,
                         audioBytes: audioData.count,
                         audioDurationSeconds: audioDurationSeconds,
                         totalElapsedSeconds: Date().timeIntervalSince(requestStartTime),
@@ -107,6 +111,7 @@ struct OpenAITranscriptionClient {
         apiKey: String,
         model: String,
         languageHint: String?,
+        prompt: String?,
         timeoutSeconds: TimeInterval
     ) async throws -> TranscribeOnceResponse {
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -123,7 +128,8 @@ struct OpenAITranscriptionClient {
             fileName: fileName,
             boundary: boundary,
             model: model,
-            languageHint: languageHint
+            languageHint: languageHint,
+            prompt: prompt
         )
 
         let session = Self.makeSession(timeoutSeconds: timeoutSeconds)
@@ -237,7 +243,8 @@ struct OpenAITranscriptionClient {
         fileName: String,
         boundary: String,
         model: String,
-        languageHint: String?
+        languageHint: String?,
+        prompt: String?
     ) -> Data {
         var body = Data()
         body.appendUTF8("--\(boundary)\r\n")
@@ -253,6 +260,13 @@ struct OpenAITranscriptionClient {
             body.appendUTF8("--\(boundary)\r\n")
             body.appendUTF8("Content-Disposition: form-data; name=\"language\"\r\n\r\n")
             body.appendUTF8("\(languageHint)\r\n")
+        }
+
+        if let prompt = prompt?.trimmingCharacters(in: .whitespacesAndNewlines),
+           !prompt.isEmpty {
+            body.appendUTF8("--\(boundary)\r\n")
+            body.appendUTF8("Content-Disposition: form-data; name=\"prompt\"\r\n\r\n")
+            body.appendUTF8("\(prompt)\r\n")
         }
 
         body.appendUTF8("--\(boundary)\r\n")

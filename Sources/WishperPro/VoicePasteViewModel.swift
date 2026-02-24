@@ -489,11 +489,13 @@ final class VoicePasteViewModel: ObservableObject {
 
                 let model = await MainActor.run(body: { self.selectedTranscriptionModel.rawValue })
                 let languageHint = await MainActor.run(body: { self.transcriptionLanguageHint() })
+                let prompt = await MainActor.run(body: { self.transcriptionPrompt() })
                 let transcriptionResult = try await self.transcriptionClient.transcribeAudio(
                     fileURL: recordingURL,
                     apiKey: apiKey,
                     model: model,
                     languageHint: languageHint,
+                    prompt: prompt,
                     timeoutSeconds: Self.transcriptionTimeoutSeconds,
                     maxRetries: Self.transcriptionMaxRetries
                 )
@@ -906,6 +908,17 @@ final class VoicePasteViewModel: ObservableObject {
         return selectedSourceLanguage.isoCode
     }
 
+    private func transcriptionPrompt() -> String? {
+        switch selectedSourceLanguage {
+        case .portuguesePT:
+            return "Transcrição em português europeu de Portugal. Utilizar ortografia e vocabulário de Portugal (ex: facto, autocarro, telemóvel, pequeno-almoço, ecrã)."
+        case .portugueseBR:
+            return "Transcrição em português brasileiro. Utilizar ortografia e vocabulário do Brasil (ex: fato, ônibus, celular, café da manhã, tela)."
+        default:
+            return nil
+        }
+    }
+
     private func migratePortugueseLanguageSetting(key: String) {
         guard let raw = UserDefaults.standard.string(forKey: key), raw == "pt" else { return }
         let variantRaw = UserDefaults.standard.string(forKey: Self.portugueseVariantDefaultsKey)
@@ -993,6 +1006,11 @@ final class VoicePasteViewModel: ObservableObject {
 
         if let languageHint = transcriptionMetrics.languageHint, !languageHint.isEmpty {
             parts.append("língua \(languageHint)")
+        }
+
+        if let prompt = transcriptionMetrics.prompt, !prompt.isEmpty {
+            let label = prompt.contains("Portugal") ? "pt-PT" : prompt.contains("Brasil") ? "pt-BR" : "prompt"
+            parts.append("variante \(label)")
         }
 
         if transcriptionMetrics.attempts.count > 1 {
