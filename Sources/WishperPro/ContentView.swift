@@ -190,24 +190,6 @@ private struct OptionsPage: View {
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
-                if let confirmation = viewModel.optionsSaveConfirmation {
-                    HStack(spacing: 6) {
-                        Image(systemName: "checkmark.circle.fill")
-                        Text(confirmation)
-                    }
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.green)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color.green.opacity(0.12))
-                    )
-                    .transition(.opacity.combined(with: .move(edge: .top)))
-                    .animation(.easeInOut(duration: 0.3), value: viewModel.optionsSaveConfirmation)
-                }
-
                 DarkCard {
                     VStack(alignment: .leading, spacing: 10) {
                         Text("API OpenAI")

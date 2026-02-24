@@ -23,7 +23,6 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var translationEnabled = false
     @Published var selectedSourceLanguage: SupportedLanguage = .auto
     @Published var selectedTargetLanguage: SupportedLanguage = .english
-    @Published private(set) var optionsSaveConfirmation: String?
 
     var keyStatusText: String {
         isAPIKeySaved
@@ -89,7 +88,6 @@ final class VoicePasteViewModel: ObservableObject {
     private static let translationEnabledDefaultsKey = "wishper.translation_enabled"
     private static let translationSourceDefaultsKey = "wishper.translation_source_language"
     private static let translationTargetDefaultsKey = "wishper.translation_target_language"
-    private var confirmationTask: Task<Void, Never>?
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -140,7 +138,6 @@ final class VoicePasteViewModel: ObservableObject {
             apiKeyDraft = trimmedKey
             activeAPIKey = trimmedKey
             setStatus("API key guardada localmente.", isError: false)
-            showSaveConfirmation("API key guardada com sucesso.")
         } catch {
             setStatus(error.localizedDescription, isError: true)
         }
@@ -153,7 +150,6 @@ final class VoicePasteViewModel: ObservableObject {
             apiKeyDraft = ""
             activeAPIKey = nil
             setStatus("API key removida.", isError: false)
-            showSaveConfirmation("API key removida.")
         } catch {
             setStatus(error.localizedDescription, isError: true)
         }
@@ -161,16 +157,10 @@ final class VoicePasteViewModel: ObservableObject {
 
     func onTranscriptionModelChanged() {
         persistTranscriptionModel(selectedTranscriptionModel.rawValue)
-        showSaveConfirmation("Modelo alterado para \(selectedTranscriptionModel.displayName).")
     }
 
     func onTranslationSettingsChanged() {
         persistTranslationSettings()
-        if translationEnabled {
-            showSaveConfirmation("Tradução: \(selectedSourceLanguage.displayName) -> \(selectedTargetLanguage.displayName).")
-        } else {
-            showSaveConfirmation("Tradução desativada.")
-        }
     }
 
     func pasteAPIKeyFromClipboard() {
@@ -689,15 +679,6 @@ final class VoicePasteViewModel: ObservableObject {
         isStatusError = isError
     }
 
-    private func showSaveConfirmation(_ message: String) {
-        optionsSaveConfirmation = message
-        confirmationTask?.cancel()
-        confirmationTask = Task {
-            try? await Task.sleep(for: .seconds(2.5))
-            guard !Task.isCancelled else { return }
-            optionsSaveConfirmation = nil
-        }
-    }
 
     private struct TranslationRequest {
         let sourceLanguage: String
