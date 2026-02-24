@@ -19,6 +19,24 @@ private enum AppSection: String, CaseIterable, Identifiable {
         case .options: return "slider.horizontal.3"
         }
     }
+
+    var keyboardShortcutKey: KeyEquivalent {
+        switch self {
+        case .home: return "1"
+        case .options: return ","
+        }
+    }
+
+    var keyboardShortcutModifiers: EventModifiers {
+        [.command]
+    }
+
+    var keyboardShortcutHint: String {
+        switch self {
+        case .home: return "Command+1"
+        case .options: return "Command+,"
+        }
+    }
 }
 
 struct ContentView: View {
@@ -99,6 +117,9 @@ struct ContentView: View {
                     )
                 }
                 .buttonStyle(.plain)
+                .keyboardShortcut(section.keyboardShortcutKey, modifiers: section.keyboardShortcutModifiers)
+                .accessibilityLabel("Abrir \(section.title)")
+                .accessibilityHint("Atalho \(section.keyboardShortcutHint).")
             }
             Spacer()
         }
@@ -151,6 +172,8 @@ private struct HomePage: View {
                 .buttonStyle(.borderedProminent)
                 .tint(viewModel.isRecording ? .red : .blue)
                 .disabled(viewModel.isActionDisabled)
+                .keyboardShortcut(.return, modifiers: [.command])
+                .accessibilityHint("Alterna gravação. Atalho: Command+Return.")
 
                 if viewModel.isTranscribing {
                     Button("Cancelar Transcrição") {
@@ -158,6 +181,7 @@ private struct HomePage: View {
                     }
                     .buttonStyle(.bordered)
                     .tint(.white)
+                    .keyboardShortcut(.escape, modifiers: [])
                 }
 
                 Text(viewModel.statusMessage)
@@ -277,6 +301,9 @@ private struct OptionsPage: View {
                                 .fill(Color.white.opacity(0.08))
                         )
                         .foregroundStyle(.white)
+                        .onSubmit {
+                            viewModel.saveAPIKey()
+                        }
                 }
 
                 SettingsSubgroup("Ações") {
@@ -291,6 +318,7 @@ private struct OptionsPage: View {
                             viewModel.saveAPIKey()
                         }
                         .buttonStyle(.borderedProminent)
+                        .keyboardShortcut(.defaultAction)
 
                         Button("Remover") {
                             viewModel.clearAPIKey()
@@ -571,6 +599,7 @@ private struct SettingsCardHeader: View {
             Text(title)
                 .font(.headline)
                 .foregroundStyle(.white)
+                .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(.caption)
                 .foregroundStyle(Color.white.opacity(0.66))
