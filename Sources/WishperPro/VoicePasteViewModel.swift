@@ -76,7 +76,7 @@ final class VoicePasteViewModel: ObservableObject {
         guard translationEnabled else {
             return "Tradução desativada."
         }
-        return "Traduzir de \(languageDisplayName(selectedSourceLanguage)) para \(languageDisplayName(selectedTargetLanguage))."
+        return "Traduzir de \(selectedSourceLanguage.displayName) para \(selectedTargetLanguage.displayName)."
     }
 
     var ttsStatusText: String {
@@ -202,12 +202,31 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     func onTranslationSettingsChanged() {
+        syncPortugueseVariantFromTranslation()
         persistTranslationSettings()
     }
 
     func onPortugueseVariantChanged() {
+        if selectedSourceLanguage.isPortuguese {
+            selectedSourceLanguage = selectedPortugueseVariant.supportedLanguage
+        }
+        if selectedTargetLanguage.isPortuguese {
+            selectedTargetLanguage = selectedPortugueseVariant.supportedLanguage
+        }
         onTTSSettingsChanged()
         persistTranslationSettings()
+    }
+
+    private func syncPortugueseVariantFromTranslation() {
+        if let variant = selectedTargetLanguage.portugueseVariant {
+            guard selectedPortugueseVariant != variant else { return }
+            selectedPortugueseVariant = variant
+            onTTSSettingsChanged()
+        } else if let variant = selectedSourceLanguage.portugueseVariant {
+            guard selectedPortugueseVariant != variant else { return }
+            selectedPortugueseVariant = variant
+            onTTSSettingsChanged()
+        }
     }
 
     func onTTSVoiceChanged() {
@@ -316,7 +335,7 @@ final class VoicePasteViewModel: ObservableObject {
         normalizeTTSSelection()
         let voice = selectedTTSVoice
         let model = selectedTTSModel
-        let portugueseVariant = selectedPortugueseVariant
+        let portugueseVariant = effectivePortugueseVariant()
         isLoadingTTS = true
         ttsTask = Task { [weak self] in
             guard let self else { return }
@@ -814,6 +833,10 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private func loadPersistedSettings() {
+        // Migração: "pt" → "pt-PT" ou "pt-BR" conforme variante guardada
+        migratePortugueseLanguageSetting(key: Self.translationSourceDefaultsKey)
+        migratePortugueseLanguageSetting(key: Self.translationTargetDefaultsKey)
+
         if let modelRaw = UserDefaults.standard.string(forKey: Self.transcriptionModelDefaultsKey),
            let model = TranscriptionModel(rawValue: modelRaw) {
             selectedTranscriptionModel = model
@@ -874,23 +897,32 @@ final class VoicePasteViewModel: ObservableObject {
     private func currentTranslationRequest() -> TranslationRequest? {
         guard translationEnabled else { return nil }
         return TranslationRequest(
-            sourceLanguage: languageDisplayName(selectedSourceLanguage),
-            targetLanguage: languageDisplayName(selectedTargetLanguage)
+            sourceLanguage: selectedSourceLanguage.translationName,
+            targetLanguage: selectedTargetLanguage.translationName
         )
     }
 
     private func transcriptionLanguageHint() -> String? {
-        if selectedSourceLanguage == .portuguese {
-            return selectedPortugueseVariant.transcriptionLanguageHint
-        }
         return selectedSourceLanguage.isoCode
     }
 
-    private func languageDisplayName(_ language: SupportedLanguage) -> String {
-        if language == .portuguese {
-            return selectedPortugueseVariant.translationDisplayName
+    private func migratePortugueseLanguageSetting(key: String) {
+        guard let raw = UserDefaults.standard.string(forKey: key), raw == "pt" else { return }
+        let variantRaw = UserDefaults.standard.string(forKey: Self.portugueseVariantDefaultsKey)
+        let newRaw = (variantRaw == PortugueseVariant.brazil.rawValue)
+            ? SupportedLanguage.portugueseBR.rawValue
+            : SupportedLanguage.portuguesePT.rawValue
+        UserDefaults.standard.set(newRaw, forKey: key)
+    }
+
+    private func effectivePortugueseVariant() -> PortugueseVariant {
+        if translationEnabled, let variant = selectedTargetLanguage.portugueseVariant {
+            return variant
         }
-        return language.displayName
+        if let variant = selectedSourceLanguage.portugueseVariant {
+            return variant
+        }
+        return selectedPortugueseVariant
     }
 
     private func speechTextForTTS(
@@ -917,8 +949,9 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private func shouldNormalizePortugueseForSpeech(_ text: String) -> Bool {
-        if selectedSourceLanguage == .portuguese { return true }
-        if translationEnabled && selectedTargetLanguage == .portuguese { return true }
+        if translationEnabled && !selectedTargetLanguage.isPortuguese { return false }
+        if selectedSourceLanguage.isPortuguese { return true }
+        if translationEnabled && selectedTargetLanguage.isPortuguese { return true }
         return Self.looksLikePortuguese(text)
     }
 
@@ -1063,11 +1096,19 @@ enum PortugueseVariant: String, CaseIterable, Identifiable {
     var transcriptionLanguageHint: String {
         "pt"
     }
+
+    var supportedLanguage: SupportedLanguage {
+        switch self {
+        case .portugal: return .portuguesePT
+        case .brazil: return .portugueseBR
+        }
+    }
 }
 
 enum SupportedLanguage: String, CaseIterable, Identifiable {
     case auto
-    case portuguese = "pt"
+    case portuguesePT = "pt-PT"
+    case portugueseBR = "pt-BR"
     case english = "en"
     case spanish = "es"
     case french = "fr"
@@ -1079,7 +1120,8 @@ enum SupportedLanguage: String, CaseIterable, Identifiable {
     var displayName: String {
         switch self {
         case .auto: return "Auto"
-        case .portuguese: return "Português"
+        case .portuguesePT: return "Português (Portugal)"
+        case .portugueseBR: return "Português (Brasil)"
         case .english: return "Inglês"
         case .spanish: return "Espanhol"
         case .french: return "Francês"
@@ -1091,7 +1133,29 @@ enum SupportedLanguage: String, CaseIterable, Identifiable {
     var isoCode: String? {
         switch self {
         case .auto: return nil
+        case .portuguesePT, .portugueseBR: return "pt"
         default: return rawValue
+        }
+    }
+
+    var translationName: String {
+        switch self {
+        case .auto: return "Auto"
+        case .portuguesePT: return "Português de Portugal"
+        case .portugueseBR: return "Português do Brasil"
+        default: return displayName
+        }
+    }
+
+    var isPortuguese: Bool {
+        self == .portuguesePT || self == .portugueseBR
+    }
+
+    var portugueseVariant: PortugueseVariant? {
+        switch self {
+        case .portuguesePT: return .portugal
+        case .portugueseBR: return .brazil
+        default: return nil
         }
     }
 

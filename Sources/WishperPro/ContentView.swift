@@ -482,7 +482,7 @@ private struct OptionsPage: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Língua de origem")
                                 .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.66))
+                                .foregroundStyle(Color.white.opacity(viewModel.translationEnabled ? 0.66 : 0.33))
                             Picker("Origem", selection: $viewModel.selectedSourceLanguage) {
                                 ForEach(SupportedLanguage.allCases) { lang in
                                     Text(lang.displayName).tag(lang)
@@ -490,6 +490,8 @@ private struct OptionsPage: View {
                             }
                             .pickerStyle(.menu)
                             .tint(.white)
+                            .disabled(!viewModel.translationEnabled)
+                            .opacity(viewModel.translationEnabled ? 1.0 : 0.45)
                             .onChange(of: viewModel.selectedSourceLanguage) { _ in
                                 viewModel.onTranslationSettingsChanged()
                             }
@@ -498,7 +500,7 @@ private struct OptionsPage: View {
                         VStack(alignment: .leading, spacing: 6) {
                             Text("Língua de destino")
                                 .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.66))
+                                .foregroundStyle(Color.white.opacity(viewModel.translationEnabled ? 0.66 : 0.33))
                             Picker("Destino", selection: $viewModel.selectedTargetLanguage) {
                                 ForEach(SupportedLanguage.targetLanguages) { lang in
                                     Text(lang.displayName).tag(lang)
@@ -506,6 +508,8 @@ private struct OptionsPage: View {
                             }
                             .pickerStyle(.menu)
                             .tint(.white)
+                            .disabled(!viewModel.translationEnabled)
+                            .opacity(viewModel.translationEnabled ? 1.0 : 0.45)
                             .onChange(of: viewModel.selectedTargetLanguage) { _ in
                                 viewModel.onTranslationSettingsChanged()
                             }
