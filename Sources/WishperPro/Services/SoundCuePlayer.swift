@@ -45,10 +45,7 @@ struct SoundCuePlayer {
     private func playCue(_ cue: RecordingCueSound) {
         guard cue != .none else { return }
 
-        guard let sound = Self.loadCue(cue, volume: 0.35) else {
-            NSSound.beep()
-            return
-        }
+        guard let sound = Self.loadCue(cue, volume: 0.35) else { return }
 
         sound.stop()
         sound.play()

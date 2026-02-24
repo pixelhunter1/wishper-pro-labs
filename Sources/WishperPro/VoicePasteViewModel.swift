@@ -30,7 +30,7 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var selectedTTSModel: TTSModel = .gpt4oMiniTTS
     @Published var selectedPortugueseVariant: PortugueseVariant = .portugal
     @Published var selectedStartCueSound: RecordingCueSound = .pop
-    @Published var selectedStopCueSound: RecordingCueSound = .tink
+    @Published var selectedStopCueSound: RecordingCueSound = .none
     @Published private(set) var isSpeaking = false
     @Published private(set) var isLoadingTTS = false
 
@@ -551,19 +551,36 @@ final class VoicePasteViewModel: ObservableObject {
                 }
 
                 if hasPermission {
-                    try autoPaster.paste(text: outputText)
-                    await MainActor.run {
-                        if let translationFailedMessage {
+                    do {
+                        try autoPaster.paste(text: outputText)
+                        await MainActor.run {
+                            if let translationFailedMessage {
+                                self.setStatus(
+                                    "Transcrição colada. Tradução falhou: \(translationFailedMessage)",
+                                    isError: true
+                                )
+                            } else {
+                                self.setStatus(
+                                    translationRequested
+                                        ? "Transcrição traduzida e colada no campo ativo."
+                                        : "Transcrição colada no campo ativo.",
+                                    isError: false
+                                )
+                            }
+                        }
+                    } catch {
+                        await MainActor.run {
+                            let baseMessage: String
+                            if let translationFailedMessage {
+                                baseMessage = "Transcrição pronta. Tradução falhou: \(translationFailedMessage)"
+                            } else {
+                                baseMessage = translationRequested
+                                    ? "Transcrição traduzida pronta."
+                                    : "Transcrição pronta."
+                            }
                             self.setStatus(
-                                "Transcrição colada. Tradução falhou: \(translationFailedMessage)",
+                                "\(baseMessage) \(error.localizedDescription)",
                                 isError: true
-                            )
-                        } else {
-                            self.setStatus(
-                                translationRequested
-                                    ? "Transcrição traduzida e colada no campo ativo."
-                                    : "Transcrição colada no campo ativo.",
-                                isError: false
                             )
                         }
                     }
