@@ -1,4 +1,5 @@
 import AppKit
+import Foundation
 import SwiftUI
 
 @MainActor
@@ -10,6 +11,8 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var statusMessage = "Pronto para ditar."
     @Published var isStatusError = false
     @Published var lastTranscript = ""
+    @Published private(set) var audioLevel: Double = 0
+    @Published private(set) var isSpeechDetected = false
     @Published private(set) var isAPIKeySaved = false
     @Published private(set) var hasAccessibilityPermission = false
     @Published private(set) var hotkeyLabel = "Option + Space"
@@ -31,17 +34,33 @@ final class VoicePasteViewModel: ObservableObject {
         isTranscribing || (!isRecording && !isAPIKeySaved)
     }
 
+    var bubbleStateTitle: String {
+        if isTranscribing { return "A transcrever" }
+        if isRecording { return isSpeechDetected ? "A falar" : "A ouvir" }
+        return "Parado"
+    }
+
+    var bubbleStateSubtitle: String {
+        if isTranscribing { return "processando áudio" }
+        if isRecording { return isSpeechDetected ? "voz detetada" : "à escuta" }
+        return "aguardando"
+    }
+
     private let keychain = KeychainService()
     private let recorder = AudioRecorder()
     private let transcriptionClient = OpenAITranscriptionClient()
     private let autoPaster = AutoPaster()
     private let hotkeyMonitor = GlobalHotkeyMonitor()
+    private let soundCuePlayer = SoundCuePlayer()
     private var transcriptionTask: Task<Void, Never>?
+    private var audioMeterTask: Task<Void, Never>?
+    private var activeAPIKey: String?
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
             apiKeyDraft = savedKey
             isAPIKeySaved = true
+            activeAPIKey = savedKey
         }
 
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
@@ -74,6 +93,7 @@ final class VoicePasteViewModel: ObservableObject {
             try keychain.saveAPIKey(trimmedKey)
             isAPIKeySaved = true
             apiKeyDraft = trimmedKey
+            activeAPIKey = trimmedKey
             setStatus("API key guardada localmente.", isError: false)
         } catch {
             setStatus(error.localizedDescription, isError: true)
@@ -85,6 +105,7 @@ final class VoicePasteViewModel: ObservableObject {
             try keychain.deleteAPIKey()
             isAPIKeySaved = false
             apiKeyDraft = ""
+            activeAPIKey = nil
             setStatus("API key removida.", isError: false)
         } catch {
             setStatus(error.localizedDescription, isError: true)
@@ -146,7 +167,7 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private func startRecording(origin: TriggerOrigin) async {
-        guard let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty else {
+        guard let savedKey = activeAPIKey, !savedKey.isEmpty else {
             isAPIKeySaved = false
             setStatus("Guarda a API key antes de iniciar o ditado.", isError: true)
             return
@@ -162,6 +183,9 @@ final class VoicePasteViewModel: ObservableObject {
         do {
             try recorder.start()
             isRecording = true
+            lastTranscript = ""
+            startAudioMetering()
+            soundCuePlayer.playStartCue()
             let message: String
             switch origin {
             case .hotkey:
@@ -173,6 +197,7 @@ final class VoicePasteViewModel: ObservableObject {
             }
             setStatus(message, isError: false)
         } catch {
+            stopAudioMetering()
             setStatus(error.localizedDescription, isError: true)
         }
     }
@@ -183,11 +208,14 @@ final class VoicePasteViewModel: ObservableObject {
             recordingURL = try recorder.stop()
         } catch {
             isRecording = false
+            stopAudioMetering()
             setStatus(error.localizedDescription, isError: true)
             return
         }
 
         isRecording = false
+        stopAudioMetering()
+        soundCuePlayer.playStopCue()
         isTranscribing = true
         setStatus("A transcrever áudio...", isError: false)
         transcriptionTask?.cancel()
@@ -202,7 +230,7 @@ final class VoicePasteViewModel: ObservableObject {
             }
 
             do {
-                guard let apiKey = await MainActor.run(body: { self.keychain.loadAPIKey() }), !apiKey.isEmpty else {
+                guard let apiKey = await MainActor.run(body: { self.activeAPIKey }), !apiKey.isEmpty else {
                     throw VoicePasteError.missingAPIKey
                 }
 
@@ -258,6 +286,26 @@ final class VoicePasteViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func startAudioMetering() {
+        stopAudioMetering()
+        audioMeterTask = Task { [weak self] in
+            guard let self else { return }
+            while !Task.isCancelled {
+                let level = self.recorder.currentAudioLevel()
+                self.audioLevel = level
+                self.isSpeechDetected = level > 0.12
+                try? await Task.sleep(for: .milliseconds(120))
+            }
+        }
+    }
+
+    private func stopAudioMetering() {
+        audioMeterTask?.cancel()
+        audioMeterTask = nil
+        audioLevel = 0
+        isSpeechDetected = false
     }
 
     private func setStatus(_ message: String, isError: Bool) {
