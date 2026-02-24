@@ -164,6 +164,28 @@ private struct HomePage: View {
                 .foregroundStyle(viewModel.isStatusError ? Color.red.opacity(0.95) : Color.white.opacity(0.76))
                 .textSelection(.enabled)
 
+            Text(viewModel.lastTranscriptionDiagnostics)
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(Color.white.opacity(0.58))
+                .textSelection(.enabled)
+
+            if !viewModel.transcriptionDiagnosticsHistory.isEmpty {
+                DarkCard {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Diagnóstico (últimas transcrições)")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.82))
+                        ForEach(viewModel.transcriptionDiagnosticsHistory.prefix(4), id: \.self) { line in
+                            Text(line)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.64))
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                        }
+                    }
+                }
+            }
+
             DarkCard {
                 VStack(alignment: .leading, spacing: 10) {
                     HStack {

@@ -13,6 +13,8 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var statusMessage = "Pronto para ditar."
     @Published var isStatusError = false
     @Published var lastTranscript = ""
+    @Published private(set) var lastTranscriptionDiagnostics = "Sem métricas de transcrição ainda."
+    @Published private(set) var transcriptionDiagnosticsHistory: [String] = []
     @Published private(set) var audioLevel: Double = 0
     @Published private(set) var isSpeechDetected = false
     @Published private(set) var isAPIKeySaved = false
@@ -20,7 +22,7 @@ final class VoicePasteViewModel: ObservableObject {
     @Published private(set) var hotkeyLabel = "Option + Space"
     @Published private(set) var isHotkeyReady = false
     @Published private(set) var isCapturingHotkey = false
-    @Published var selectedTranscriptionModel: TranscriptionModel = .gpt4oTranscribe
+    @Published var selectedTranscriptionModel: TranscriptionModel = .gpt4oMiniTranscribe
     @Published var translationEnabled = false
     @Published var selectedSourceLanguage: SupportedLanguage = .auto
     @Published var selectedTargetLanguage: SupportedLanguage = .english
@@ -114,6 +116,8 @@ final class VoicePasteViewModel: ObservableObject {
     private static let ttsVoiceDefaultsKey = "wishper.tts_voice"
     private static let ttsModelDefaultsKey = "wishper.tts_model"
     private static let portugueseVariantDefaultsKey = "wishper.portuguese_variant"
+    private static let transcriptionTimeoutSeconds: TimeInterval = 30
+    private static let transcriptionMaxRetries = 0
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -433,6 +437,7 @@ final class VoicePasteViewModel: ObservableObject {
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
+            let pipelineStartTime = Date()
             defer {
                 Task { @MainActor in
                     self.isTranscribing = false
@@ -448,17 +453,17 @@ final class VoicePasteViewModel: ObservableObject {
 
                 let model = await MainActor.run(body: { self.selectedTranscriptionModel.rawValue })
                 let languageHint = await MainActor.run(body: { self.transcriptionLanguageHint() })
-                let transcript = try await self.transcriptionClient.transcribeAudio(
+                let transcriptionResult = try await self.transcriptionClient.transcribeAudio(
                     fileURL: recordingURL,
                     apiKey: apiKey,
                     model: model,
                     languageHint: languageHint,
-                    timeoutSeconds: 75,
-                    maxRetries: 1
+                    timeoutSeconds: Self.transcriptionTimeoutSeconds,
+                    maxRetries: Self.transcriptionMaxRetries
                 )
                 try Task.checkCancellation()
 
-                let cleanTranscript = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+                let cleanTranscript = transcriptionResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !cleanTranscript.isEmpty else {
                     throw VoicePasteError.emptyTranscription
                 }
@@ -466,12 +471,15 @@ final class VoicePasteViewModel: ObservableObject {
                 var outputText = cleanTranscript
                 var translationRequested = false
                 var translationFailedMessage: String?
+                var translationElapsedSeconds: TimeInterval?
                 let translationRequest = await MainActor.run(body: { self.currentTranslationRequest() })
                 if let translationRequest {
                     translationRequested = true
                     await MainActor.run {
                         self.setStatus("A traduzir para \(translationRequest.targetLanguage)...", isError: false)
                     }
+
+                    let translationStartTime = Date()
                     do {
                         outputText = try await self.translationClient.translate(
                             text: cleanTranscript,
@@ -482,10 +490,24 @@ final class VoicePasteViewModel: ObservableObject {
                     } catch {
                         translationFailedMessage = error.localizedDescription
                     }
+                    translationElapsedSeconds = Date().timeIntervalSince(translationStartTime)
+                }
+
+                let pipelineElapsedSeconds = Date().timeIntervalSince(pipelineStartTime)
+                let diagnosticsSummary = await MainActor.run {
+                    self.buildTranscriptionDiagnostics(
+                        transcriptionMetrics: transcriptionResult.metrics,
+                        pipelineElapsedSeconds: pipelineElapsedSeconds,
+                        translationElapsedSeconds: translationElapsedSeconds,
+                        translationRequested: translationRequested,
+                        translationFailed: translationFailedMessage != nil
+                    )
                 }
 
                 await MainActor.run {
                     self.lastTranscript = outputText
+                    self.lastTranscriptionDiagnostics = diagnosticsSummary
+                    self.pushTranscriptionDiagnosticsHistory(diagnosticsSummary)
                 }
 
                 let shouldAutoPaste = await MainActor.run(body: { self.autoPasteEnabled })
@@ -547,10 +569,16 @@ final class VoicePasteViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 await MainActor.run {
+                    self.lastTranscriptionDiagnostics = "Transcrição cancelada."
+                    self.pushTranscriptionDiagnosticsHistory("Transcrição cancelada.")
                     self.setStatus("Transcrição cancelada.", isError: false)
                 }
             } catch {
+                let pipelineElapsedSeconds = Date().timeIntervalSince(pipelineStartTime)
                 await MainActor.run {
+                    let diagnostics = "Falhou após \(self.formatDurationSeconds(pipelineElapsedSeconds)): \(error.localizedDescription)"
+                    self.lastTranscriptionDiagnostics = diagnostics
+                    self.pushTranscriptionDiagnosticsHistory(diagnostics)
                     self.setStatus(error.localizedDescription, isError: true)
                 }
             }
@@ -866,6 +894,90 @@ final class VoicePasteViewModel: ObservableObject {
             selectedTTSVoice = fallbackVoice
         }
     }
+
+    private func buildTranscriptionDiagnostics(
+        transcriptionMetrics: OpenAITranscriptionMetrics,
+        pipelineElapsedSeconds: TimeInterval,
+        translationElapsedSeconds: TimeInterval?,
+        translationRequested: Bool,
+        translationFailed: Bool
+    ) -> String {
+        var parts: [String] = [
+            "transcrição \(formatDurationSeconds(transcriptionMetrics.totalElapsedSeconds))",
+            "total \(formatDurationSeconds(pipelineElapsedSeconds))",
+            "tamanho \(Self.byteCountFormatter.string(fromByteCount: Int64(transcriptionMetrics.audioBytes)))",
+            "modelo \(transcriptionMetrics.model)",
+            "tentativas \(transcriptionMetrics.attempts.count)",
+        ]
+
+        if let audioDurationSeconds = transcriptionMetrics.audioDurationSeconds {
+            parts.append("áudio \(formatDurationSeconds(audioDurationSeconds))")
+        }
+
+        if let languageHint = transcriptionMetrics.languageHint, !languageHint.isEmpty {
+            parts.append("língua \(languageHint)")
+        }
+
+        if transcriptionMetrics.attempts.count > 1 {
+            let retryReasons = transcriptionMetrics.attempts
+                .dropLast()
+                .compactMap(\.failureReason)
+            if !retryReasons.isEmpty {
+                parts.append("retry \(retryReasons.joined(separator: ","))")
+            }
+        }
+
+        if let finalAttempt = transcriptionMetrics.attempts.last,
+           let openAIProcessingMilliseconds = finalAttempt.openAIProcessingMilliseconds {
+            parts.append("OpenAI \(openAIProcessingMilliseconds)ms")
+        }
+
+        if translationRequested {
+            if let translationElapsedSeconds {
+                let prefix = translationFailed ? "tradução falhou em" : "tradução"
+                parts.append("\(prefix) \(formatDurationSeconds(translationElapsedSeconds))")
+            } else {
+                parts.append(translationFailed ? "tradução falhou" : "tradução ativa")
+            }
+        }
+
+        return parts.joined(separator: " | ")
+    }
+
+    private func formatDurationSeconds(_ seconds: TimeInterval) -> String {
+        guard seconds.isFinite else {
+            return "n/a"
+        }
+
+        if seconds >= 10 {
+            return String(format: "%.0fs", seconds)
+        }
+
+        return String(format: "%.1fs", seconds)
+    }
+
+    private static let byteCountFormatter: ByteCountFormatter = {
+        let formatter = ByteCountFormatter()
+        formatter.allowedUnits = [.useKB, .useMB]
+        formatter.countStyle = .file
+        formatter.isAdaptive = true
+        return formatter
+    }()
+
+    private func pushTranscriptionDiagnosticsHistory(_ diagnostics: String) {
+        let timestamp = Self.diagnosticsTimestampFormatter.string(from: Date())
+        transcriptionDiagnosticsHistory.insert("[\(timestamp)] \(diagnostics)", at: 0)
+        if transcriptionDiagnosticsHistory.count > 8 {
+            transcriptionDiagnosticsHistory.removeLast(transcriptionDiagnosticsHistory.count - 8)
+        }
+    }
+
+    private static let diagnosticsTimestampFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pt_PT")
+        formatter.dateFormat = "HH:mm:ss"
+        return formatter
+    }()
 
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message

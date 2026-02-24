@@ -15,7 +15,8 @@ App nativa em Swift para ditado com OpenAI, sem login, com auto-paste no campo a
 - Bubble dinâmico `150x50` com estado de voz (`A ouvir`, `A falar`, `A transcrever`).
 - Bubble flutuante no desktop durante gravação/transcrição, mesmo com janela principal minimizada.
 - Bip no início e no fim da gravação.
-- Retry automático e timeout maior na transcrição para reduzir falhas ocasionais.
+- Modo de baixa latência por defeito na transcrição (modelo rápido, timeout curto e sem retry automático).
+- Diagnóstico da última transcrição com tempo total, tamanho/duração do áudio, tentativas e `openai-processing-ms` (quando disponível).
 - API key guardada localmente no macOS Keychain.
 - Não há base de dados de transcrições; a transcrição anterior é limpa ao iniciar nova fala.
 
