@@ -1,4 +1,5 @@
 import AppKit
+import AVFoundation
 import Carbon
 import Foundation
 import SwiftUI
@@ -23,6 +24,10 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var translationEnabled = false
     @Published var selectedSourceLanguage: SupportedLanguage = .auto
     @Published var selectedTargetLanguage: SupportedLanguage = .english
+    @Published var selectedTTSVoice: TTSVoice = .alloy
+    @Published var selectedTTSModel: TTSModel = .tts1
+    @Published private(set) var isSpeaking = false
+    @Published private(set) var isLoadingTTS = false
 
     var keyStatusText: String {
         isAPIKeySaved
@@ -69,15 +74,22 @@ final class VoicePasteViewModel: ObservableObject {
         return "Traduzir de \(selectedSourceLanguage.displayName) para \(selectedTargetLanguage.displayName)."
     }
 
+    var ttsStatusText: String {
+        "Voz ativa: \(selectedTTSVoice.displayName) (\(selectedTTSModel.subtitle))"
+    }
+
     private let keychain = KeychainService()
     private let recorder = AudioRecorder()
     private let transcriptionClient = OpenAITranscriptionClient()
     private let translationClient = OpenAITranslationClient()
+    private let ttsClient = OpenAITTSClient()
     private let autoPaster = AutoPaster()
     private let hotkeyMonitor = GlobalHotkeyMonitor()
     private let soundCuePlayer = SoundCuePlayer()
     private var transcriptionTask: Task<Void, Never>?
     private var audioMeterTask: Task<Void, Never>?
+    private var ttsTask: Task<Void, Never>?
+    private var audioPlayer: AVAudioPlayer?
     private var activeAPIKey: String?
     private var activeShortcut: HotkeyShortcut = .default
     private var localCaptureMonitor: Any?
@@ -88,6 +100,8 @@ final class VoicePasteViewModel: ObservableObject {
     private static let translationEnabledDefaultsKey = "wishper.translation_enabled"
     private static let translationSourceDefaultsKey = "wishper.translation_source_language"
     private static let translationTargetDefaultsKey = "wishper.translation_target_language"
+    private static let ttsVoiceDefaultsKey = "wishper.tts_voice"
+    private static let ttsModelDefaultsKey = "wishper.tts_model"
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -238,6 +252,71 @@ final class VoicePasteViewModel: ObservableObject {
         transcriptionTask = nil
         isTranscribing = false
         setStatus("Transcrição cancelada.", isError: false)
+    }
+
+    func speakText(_ text: String) {
+        stopSpeaking()
+        guard let apiKey = activeAPIKey, !apiKey.isEmpty else {
+            setStatus("Guarda a API key para usar a voz.", isError: true)
+            return
+        }
+        let voice = selectedTTSVoice
+        let model = selectedTTSModel
+        isLoadingTTS = true
+        ttsTask = Task { [weak self] in
+            guard let self else { return }
+            do {
+                let audioData = try await self.ttsClient.synthesize(
+                    text: text,
+                    apiKey: apiKey,
+                    voice: voice,
+                    model: model
+                )
+                try Task.checkCancellation()
+                let player = try AVAudioPlayer(data: audioData)
+                await MainActor.run {
+                    self.audioPlayer = player
+                    self.isLoadingTTS = false
+                    self.isSpeaking = true
+                }
+                player.play()
+                while player.isPlaying {
+                    try await Task.sleep(for: .milliseconds(200))
+                }
+                await MainActor.run {
+                    self.isSpeaking = false
+                }
+            } catch is CancellationError {
+                await MainActor.run {
+                    self.isLoadingTTS = false
+                    self.isSpeaking = false
+                }
+            } catch {
+                await MainActor.run {
+                    self.isLoadingTTS = false
+                    self.isSpeaking = false
+                    self.setStatus(error.localizedDescription, isError: true)
+                }
+            }
+        }
+    }
+
+    func previewTTSVoice(_ voice: TTSVoice) {
+        speakText(voice.previewText)
+    }
+
+    func stopSpeaking() {
+        ttsTask?.cancel()
+        ttsTask = nil
+        audioPlayer?.stop()
+        audioPlayer = nil
+        isLoadingTTS = false
+        isSpeaking = false
+    }
+
+    func onTTSSettingsChanged() {
+        UserDefaults.standard.set(selectedTTSVoice.rawValue, forKey: Self.ttsVoiceDefaultsKey)
+        UserDefaults.standard.set(selectedTTSModel.rawValue, forKey: Self.ttsModelDefaultsKey)
     }
 
     func toggleRecordingFromButton() {
@@ -649,6 +728,16 @@ final class VoicePasteViewModel: ObservableObject {
         if let targetRaw = UserDefaults.standard.string(forKey: Self.translationTargetDefaultsKey),
            let target = SupportedLanguage(rawValue: targetRaw) {
             selectedTargetLanguage = target
+        }
+
+        if let voiceRaw = UserDefaults.standard.string(forKey: Self.ttsVoiceDefaultsKey),
+           let voice = TTSVoice(rawValue: voiceRaw) {
+            selectedTTSVoice = voice
+        }
+
+        if let modelRaw = UserDefaults.standard.string(forKey: Self.ttsModelDefaultsKey),
+           let model = TTSModel(rawValue: modelRaw) {
+            selectedTTSModel = model
         }
     }
 

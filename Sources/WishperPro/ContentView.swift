@@ -166,9 +166,39 @@ private struct HomePage: View {
 
             DarkCard {
                 VStack(alignment: .leading, spacing: 10) {
-                    Text("Transcrição Atual")
-                        .font(.headline)
-                        .foregroundStyle(.white)
+                    HStack {
+                        Text("Transcrição Atual")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+                        Spacer()
+                        if !viewModel.lastTranscript.isEmpty {
+                            if viewModel.isLoadingTTS {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.white)
+                            } else if viewModel.isSpeaking {
+                                Button {
+                                    viewModel.stopSpeaking()
+                                } label: {
+                                    Label("Parar", systemImage: "stop.fill")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.red)
+                                .controlSize(.small)
+                            } else {
+                                Button {
+                                    viewModel.speakText(viewModel.lastTranscript)
+                                } label: {
+                                    Label("Ouvir", systemImage: "speaker.wave.2.fill")
+                                        .font(.caption.weight(.semibold))
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.white)
+                                .controlSize(.small)
+                            }
+                        }
+                    }
                     ScrollView {
                         Text(viewModel.lastTranscript.isEmpty ? "Sem texto no momento." : viewModel.lastTranscript)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -338,6 +368,68 @@ private struct OptionsPage: View {
                             .font(.caption)
                             .foregroundStyle(Color.white.opacity(0.7))
                             .lineLimit(2)
+                    }
+                }
+
+                DarkCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        Text("Voz (Text-to-Speech)")
+                            .font(.headline)
+                            .foregroundStyle(.white)
+
+                        Picker("Voz", selection: $viewModel.selectedTTSVoice) {
+                            ForEach(TTSVoice.allCases) { voice in
+                                Text("\(voice.displayName) — \(voice.description)")
+                                    .tag(voice)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white)
+                        .onChange(of: viewModel.selectedTTSVoice) { _ in
+                            viewModel.onTTSSettingsChanged()
+                        }
+
+                        Picker("Modelo", selection: $viewModel.selectedTTSModel) {
+                            ForEach(TTSModel.allCases) { model in
+                                Text("\(model.displayName) — \(model.subtitle)")
+                                    .tag(model)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .tint(.white)
+                        .onChange(of: viewModel.selectedTTSModel) { _ in
+                            viewModel.onTTSSettingsChanged()
+                        }
+
+                        HStack(spacing: 10) {
+                            if viewModel.isLoadingTTS {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .tint(.white)
+                                Text("A gerar preview...")
+                                    .font(.caption)
+                                    .foregroundStyle(Color.white.opacity(0.66))
+                            } else if viewModel.isSpeaking {
+                                Button("Parar Preview") {
+                                    viewModel.stopSpeaking()
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.red)
+                            } else {
+                                Button {
+                                    viewModel.previewTTSVoice(viewModel.selectedTTSVoice)
+                                } label: {
+                                    Label("Ouvir Preview", systemImage: "play.fill")
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.white)
+                                .disabled(!viewModel.isAPIKeySaved)
+                            }
+                        }
+
+                        Text(viewModel.ttsStatusText)
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.66))
                     }
                 }
 
