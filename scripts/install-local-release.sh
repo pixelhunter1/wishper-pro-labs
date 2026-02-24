@@ -7,6 +7,7 @@ APP_PATH="$HOME/Applications/$APP_NAME"
 BUNDLE_ID="com.wishper.pro"
 EXECUTABLE_NAME="WishperPro"
 ICON_PATH="$ROOT_DIR/Assets/AppIcon.icns"
+ENTITLEMENTS_PATH="$ROOT_DIR/Resources/WishperPro.entitlements"
 
 detect_signing_identity() {
   if [[ -n "${WISHPER_SIGN_IDENTITY:-}" ]]; then
@@ -84,7 +85,9 @@ main() {
   write_info_plist
 
   echo "[4/5] Signing bundle..."
-  codesign --force --deep --sign "$signing_identity" "$APP_PATH"
+  codesign --force --deep --sign "$signing_identity" \
+    --entitlements "$ENTITLEMENTS_PATH" \
+    "$APP_PATH"
   xattr -dr com.apple.quarantine "$APP_PATH" || true
 
   echo "[5/5] Restarting app..."
