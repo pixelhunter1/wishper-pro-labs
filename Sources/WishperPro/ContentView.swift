@@ -39,26 +39,47 @@ private enum AppSection: String, CaseIterable, Identifiable {
     }
 }
 
+private enum UIStyle {
+    static let pagePadding: CGFloat = 20
+    static let contentSpacing: CGFloat = 18
+    static let cardSpacing: CGFloat = 14
+    static let compactSpacing: CGFloat = 8
+    static let cardPadding: CGFloat = 14
+    static let subgroupPadding: CGFloat = 10
+    static let cardCornerRadius: CGFloat = 14
+    static let subgroupCornerRadius: CGFloat = 10
+    static let mutedTextOpacity: Double = 0.66
+    static let secondaryTextOpacity: Double = 0.68
+    static let tertiaryTextOpacity: Double = 0.55
+    static let cardFillOpacity: Double = 0.08
+    static let cardStrokeOpacity: Double = 0.12
+    static let subgroupFillOpacity: Double = 0.05
+    static let subgroupStrokeOpacity: Double = 0.08
+}
+
 struct ContentView: View {
     @ObservedObject var viewModel: VoicePasteViewModel
     @State private var selectedSection: AppSection = .home
+    @State private var isDiagnosticsExpanded = false
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            header
-            sectionSwitcher
+        VStack(alignment: .leading, spacing: UIStyle.contentSpacing) {
+            topBar
 
             Group {
                 switch selectedSection {
                 case .home:
-                    HomePage(viewModel: viewModel)
+                    HomePage(
+                        viewModel: viewModel,
+                        isDiagnosticsExpanded: $isDiagnosticsExpanded
+                    )
                 case .options:
                     OptionsPage(viewModel: viewModel)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
-        .padding(20)
+        .padding(UIStyle.pagePadding)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(
             LinearGradient(
@@ -74,18 +95,10 @@ struct ContentView: View {
         .preferredColorScheme(.dark)
     }
 
-    private var header: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Wishper Pro")
-                    .font(.system(size: 28, weight: .bold, design: .rounded))
-                    .foregroundStyle(.white)
-                Text("Ditado profissional com OpenAI")
-                    .font(.subheadline)
-                    .foregroundStyle(Color.white.opacity(0.68))
-            }
-
-            Spacer()
+    private var topBar: some View {
+        HStack(alignment: .center, spacing: 12) {
+            sectionSwitcher
+            Spacer(minLength: 12)
 
             VoiceBubbleView(
                 title: viewModel.bubbleStateTitle,
@@ -103,17 +116,17 @@ struct ContentView: View {
                 Button {
                     selectedSection = section
                 } label: {
-                    HStack(spacing: 8) {
+                    HStack(spacing: UIStyle.compactSpacing) {
                         Image(systemName: section.icon)
                         Text(section.title)
                     }
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(selectedSection == section ? Color.black : Color.white.opacity(0.84))
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 8)
+                    .padding(.horizontal, UIStyle.cardPadding)
+                    .padding(.vertical, UIStyle.compactSpacing)
                     .background(
                         Capsule(style: .continuous)
-                            .fill(selectedSection == section ? Color.white : Color.white.opacity(0.12))
+                            .fill(selectedSection == section ? Color.white : Color.white.opacity(UIStyle.cardStrokeOpacity))
                     )
                 }
                 .buttonStyle(.plain)
@@ -121,39 +134,54 @@ struct ContentView: View {
                 .accessibilityLabel("Abrir \(section.title)")
                 .accessibilityHint("Atalho \(section.keyboardShortcutHint).")
             }
-            Spacer()
         }
     }
 }
 
-
 private struct HomePage: View {
     @ObservedObject var viewModel: VoicePasteViewModel
+    @Binding var isDiagnosticsExpanded: Bool
 
     var body: some View {
         ScrollView(.vertical) {
-            VStack(alignment: .leading, spacing: 14) {
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 12) {
-                        HStack {
-                            Label("Push-to-Talk", systemImage: "keyboard")
-                                .font(.subheadline.weight(.semibold))
-                                .foregroundStyle(.white)
-                            Spacer()
-                            Text(viewModel.hotkeyLabel)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white.opacity(0.88))
-                        }
+            VStack(alignment: .leading, spacing: UIStyle.cardSpacing) {
+                HomeHeroCard(viewModel: viewModel)
+                HomeTranscriptCard(viewModel: viewModel)
+                HomeDiagnosticsCard(
+                    viewModel: viewModel,
+                    isExpanded: $isDiagnosticsExpanded
+                )
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+}
 
-                        Text(
-                            viewModel.isHotkeyReady
-                                ? "Usa o atalho para iniciar/parar gravação."
-                                : "Atalho indisponível. Usa o botão abaixo."
-                        )
-                        .font(.caption)
-                        .foregroundStyle(Color.white.opacity(0.68))
-                    }
+private struct HomeHeroCard: View {
+    @ObservedObject var viewModel: VoicePasteViewModel
+
+    var body: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack {
+                    Label("Push-to-Talk", systemImage: "keyboard")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text(viewModel.hotkeyLabel)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white.opacity(0.88))
                 }
+
+                Text(
+                    viewModel.isHotkeyReady
+                        ? "Usa o atalho para iniciar/parar gravação."
+                        : "Atalho indisponível. Usa o botão abaixo."
+                )
+                .font(.caption)
+                .foregroundStyle(Color.white.opacity(UIStyle.secondaryTextOpacity))
 
                 Button {
                     viewModel.toggleRecordingFromButton()
@@ -186,82 +214,115 @@ private struct HomePage: View {
 
                 Text(viewModel.statusMessage)
                     .font(.callout)
-                    .foregroundStyle(viewModel.isStatusError ? Color.red.opacity(0.95) : Color.white.opacity(0.76))
+                    .foregroundStyle(
+                        viewModel.isStatusError
+                            ? Color.red.opacity(0.95)
+                            : Color.white.opacity(0.76)
+                    )
                     .textSelection(.enabled)
+            }
+        }
+    }
+}
 
-                Text(viewModel.lastTranscriptionDiagnostics)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(Color.white.opacity(0.58))
-                    .textSelection(.enabled)
+private struct HomeTranscriptCard: View {
+    @ObservedObject var viewModel: VoicePasteViewModel
 
-                if !viewModel.transcriptionDiagnosticsHistory.isEmpty {
-                    DarkCard {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("Diagnóstico (últimas transcrições)")
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(Color.white.opacity(0.82))
-                            ForEach(viewModel.transcriptionDiagnosticsHistory.prefix(4), id: \.self) { line in
-                                Text(line)
-                                    .font(.caption2.monospacedDigit())
-                                    .foregroundStyle(Color.white.opacity(0.64))
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
+    var body: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack {
+                    Text("Transcrição Atual")
+                        .font(.headline)
+                        .foregroundStyle(.white)
+                    Spacer()
+                    if !viewModel.lastTranscript.isEmpty {
+                        if viewModel.isLoadingTTS {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                        } else if viewModel.isSpeaking {
+                            Button {
+                                viewModel.stopSpeaking()
+                            } label: {
+                                Label("Parar", systemImage: "stop.fill")
+                                    .font(.caption.weight(.semibold))
                             }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                            .controlSize(.small)
+                        } else {
+                            Button {
+                                viewModel.speakText(viewModel.lastTranscript)
+                            } label: {
+                                Label("Ouvir", systemImage: "speaker.wave.2.fill")
+                                    .font(.caption.weight(.semibold))
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.white)
+                            .controlSize(.small)
                         }
                     }
                 }
+                ScrollView {
+                    Text(viewModel.lastTranscript.isEmpty ? "Sem texto no momento." : viewModel.lastTranscript)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .font(.body)
+                        .foregroundStyle(.white.opacity(0.9))
+                        .textSelection(.enabled)
+                        .padding(.vertical, 6)
+                }
+                .frame(minHeight: 180, maxHeight: 260)
+            }
+        }
+    }
+}
 
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        HStack {
-                            Text("Transcrição Atual")
-                                .font(.headline)
-                                .foregroundStyle(.white)
-                            Spacer()
-                            if !viewModel.lastTranscript.isEmpty {
-                                if viewModel.isLoadingTTS {
-                                    ProgressView()
-                                        .controlSize(.small)
-                                        .tint(.white)
-                                } else if viewModel.isSpeaking {
-                                    Button {
-                                        viewModel.stopSpeaking()
-                                    } label: {
-                                        Label("Parar", systemImage: "stop.fill")
-                                            .font(.caption.weight(.semibold))
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .tint(.red)
-                                    .controlSize(.small)
-                                } else {
-                                    Button {
-                                        viewModel.speakText(viewModel.lastTranscript)
-                                    } label: {
-                                        Label("Ouvir", systemImage: "speaker.wave.2.fill")
-                                            .font(.caption.weight(.semibold))
-                                    }
-                                    .buttonStyle(.bordered)
-                                    .tint(.white)
-                                    .controlSize(.small)
-                                }
-                            }
-                        }
-                        ScrollView {
-                            Text(viewModel.lastTranscript.isEmpty ? "Sem texto no momento." : viewModel.lastTranscript)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .font(.body)
-                                .foregroundStyle(.white.opacity(0.9))
+private struct HomeDiagnosticsCard: View {
+    @ObservedObject var viewModel: VoicePasteViewModel
+    @Binding var isExpanded: Bool
+
+    var body: some View {
+        DarkCard {
+            DisclosureGroup(isExpanded: $isExpanded) {
+                VStack(alignment: .leading, spacing: UIStyle.compactSpacing) {
+                    Text(viewModel.lastTranscriptionDiagnostics)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(Color.white.opacity(0.58))
+                        .textSelection(.enabled)
+
+                    if !viewModel.transcriptionDiagnosticsHistory.isEmpty {
+                        Divider()
+                            .overlay(Color.white.opacity(UIStyle.cardStrokeOpacity))
+                            .padding(.vertical, 2)
+
+                        Text("Últimas transcrições")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(Color.white.opacity(0.82))
+
+                        ForEach(viewModel.transcriptionDiagnosticsHistory.prefix(4), id: \.self) { line in
+                            Text(line)
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(Color.white.opacity(0.64))
                                 .textSelection(.enabled)
-                                .padding(.vertical, 6)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                         }
-                        .frame(minHeight: 180, maxHeight: 260)
                     }
+                }
+                .padding(.top, UIStyle.compactSpacing)
+            } label: {
+                HStack {
+                    Label("Diagnóstico técnico", systemImage: "waveform.path.ecg")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.white)
+                    Spacer()
+                    Text(isExpanded ? "Ocultar" : "Mostrar")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(Color.white.opacity(UIStyle.mutedTextOpacity))
                 }
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 8)
+            .tint(.white)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -602,7 +663,7 @@ private struct SettingsCardHeader: View {
                 .accessibilityAddTraits(.isHeader)
             Text(subtitle)
                 .font(.caption)
-                .foregroundStyle(Color.white.opacity(0.66))
+                .foregroundStyle(Color.white.opacity(UIStyle.mutedTextOpacity))
         }
     }
 }
@@ -617,21 +678,21 @@ private struct SettingsSubgroup<Content: View>: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: UIStyle.compactSpacing) {
             Text(title.uppercased())
                 .font(.caption2.weight(.semibold))
-                .foregroundStyle(Color.white.opacity(0.55))
+                .foregroundStyle(Color.white.opacity(UIStyle.tertiaryTextOpacity))
             content
         }
-        .padding(10)
+        .padding(UIStyle.subgroupPadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color.white.opacity(0.05))
+            RoundedRectangle(cornerRadius: UIStyle.subgroupCornerRadius, style: .continuous)
+                .fill(Color.white.opacity(UIStyle.subgroupFillOpacity))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+            RoundedRectangle(cornerRadius: UIStyle.subgroupCornerRadius, style: .continuous)
+                .stroke(Color.white.opacity(UIStyle.subgroupStrokeOpacity), lineWidth: 1)
         )
     }
 }
@@ -646,7 +707,7 @@ private struct SettingsInfoText: View {
     var body: some View {
         Text(text)
             .font(.caption)
-            .foregroundStyle(Color.white.opacity(0.66))
+            .foregroundStyle(Color.white.opacity(UIStyle.mutedTextOpacity))
             .lineLimit(3)
     }
 }
@@ -656,15 +717,15 @@ private struct DarkCard<Content: View>: View {
 
     var body: some View {
         content
-            .padding(14)
+            .padding(UIStyle.cardPadding)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .fill(Color.white.opacity(0.08))
+                RoundedRectangle(cornerRadius: UIStyle.cardCornerRadius, style: .continuous)
+                    .fill(Color.white.opacity(UIStyle.cardFillOpacity))
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 14, style: .continuous)
-                    .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                RoundedRectangle(cornerRadius: UIStyle.cardCornerRadius, style: .continuous)
+                    .stroke(Color.white.opacity(UIStyle.cardStrokeOpacity), lineWidth: 1)
             )
     }
 }
