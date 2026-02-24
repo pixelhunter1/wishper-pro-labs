@@ -15,7 +15,7 @@ private enum AppSection: String, CaseIterable, Identifiable {
 
     var icon: String {
         switch self {
-        case .home: return "waveform.and.mic"
+        case .home: return "house.fill"
         case .options: return "slider.horizontal.3"
         }
     }
@@ -38,7 +38,7 @@ struct ContentView: View {
                     OptionsPage(viewModel: viewModel)
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
         }
         .padding(20)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -110,129 +110,134 @@ private struct HomePage: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            DarkCard {
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack {
-                        Label("Push-to-Talk", systemImage: "keyboard")
-                            .font(.subheadline.weight(.semibold))
-                            .foregroundStyle(.white)
-                        Spacer()
-                        Text(viewModel.hotkeyLabel)
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.88))
-                    }
-
-                    Text(
-                        viewModel.isHotkeyReady
-                            ? "Usa o atalho para iniciar/parar gravação."
-                            : "Atalho indisponível. Usa o botão abaixo."
-                    )
-                    .font(.caption)
-                    .foregroundStyle(Color.white.opacity(0.68))
-                }
-            }
-
-            Button {
-                viewModel.toggleRecordingFromButton()
-            } label: {
-                HStack {
-                    Spacer()
-                    Label(
-                        viewModel.isRecording ? "Parar Ditado" : "Iniciar Ditado",
-                        systemImage: viewModel.isRecording ? "stop.circle.fill" : "mic.circle.fill"
-                    )
-                    Spacer()
-                }
-                .font(.headline)
-                .padding(.vertical, 10)
-            }
-            .buttonStyle(.borderedProminent)
-            .tint(viewModel.isRecording ? .red : .blue)
-            .disabled(viewModel.isActionDisabled)
-
-            if viewModel.isTranscribing {
-                Button("Cancelar Transcrição") {
-                    viewModel.cancelTranscription()
-                }
-                .buttonStyle(.bordered)
-                .tint(.white)
-            }
-
-            Text(viewModel.statusMessage)
-                .font(.callout)
-                .foregroundStyle(viewModel.isStatusError ? Color.red.opacity(0.95) : Color.white.opacity(0.76))
-                .textSelection(.enabled)
-
-            Text(viewModel.lastTranscriptionDiagnostics)
-                .font(.caption.monospacedDigit())
-                .foregroundStyle(Color.white.opacity(0.58))
-                .textSelection(.enabled)
-
-            if !viewModel.transcriptionDiagnosticsHistory.isEmpty {
+        ScrollView(.vertical) {
+            VStack(alignment: .leading, spacing: 14) {
                 DarkCard {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Diagnóstico (últimas transcrições)")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.white.opacity(0.82))
-                        ForEach(viewModel.transcriptionDiagnosticsHistory.prefix(4), id: \.self) { line in
-                            Text(line)
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(Color.white.opacity(0.64))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Label("Push-to-Talk", systemImage: "keyboard")
+                                .font(.subheadline.weight(.semibold))
+                                .foregroundStyle(.white)
+                            Spacer()
+                            Text(viewModel.hotkeyLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white.opacity(0.88))
                         }
+
+                        Text(
+                            viewModel.isHotkeyReady
+                                ? "Usa o atalho para iniciar/parar gravação."
+                                : "Atalho indisponível. Usa o botão abaixo."
+                        )
+                        .font(.caption)
+                        .foregroundStyle(Color.white.opacity(0.68))
                     }
                 }
-            }
 
-            DarkCard {
-                VStack(alignment: .leading, spacing: 10) {
+                Button {
+                    viewModel.toggleRecordingFromButton()
+                } label: {
                     HStack {
-                        Text("Transcrição Atual")
-                            .font(.headline)
-                            .foregroundStyle(.white)
                         Spacer()
-                        if !viewModel.lastTranscript.isEmpty {
-                            if viewModel.isLoadingTTS {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(.white)
-                            } else if viewModel.isSpeaking {
-                                Button {
-                                    viewModel.stopSpeaking()
-                                } label: {
-                                    Label("Parar", systemImage: "stop.fill")
-                                        .font(.caption.weight(.semibold))
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.red)
-                                .controlSize(.small)
-                            } else {
-                                Button {
-                                    viewModel.speakText(viewModel.lastTranscript)
-                                } label: {
-                                    Label("Ouvir", systemImage: "speaker.wave.2.fill")
-                                        .font(.caption.weight(.semibold))
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.white)
-                                .controlSize(.small)
+                        Label(
+                            viewModel.isRecording ? "Parar Ditado" : "Iniciar Ditado",
+                            systemImage: viewModel.isRecording ? "stop.circle.fill" : "mic.circle.fill"
+                        )
+                        Spacer()
+                    }
+                    .font(.headline)
+                    .padding(.vertical, 10)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(viewModel.isRecording ? .red : .blue)
+                .disabled(viewModel.isActionDisabled)
+
+                if viewModel.isTranscribing {
+                    Button("Cancelar Transcrição") {
+                        viewModel.cancelTranscription()
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.white)
+                }
+
+                Text(viewModel.statusMessage)
+                    .font(.callout)
+                    .foregroundStyle(viewModel.isStatusError ? Color.red.opacity(0.95) : Color.white.opacity(0.76))
+                    .textSelection(.enabled)
+
+                Text(viewModel.lastTranscriptionDiagnostics)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(Color.white.opacity(0.58))
+                    .textSelection(.enabled)
+
+                if !viewModel.transcriptionDiagnosticsHistory.isEmpty {
+                    DarkCard {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Diagnóstico (últimas transcrições)")
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(Color.white.opacity(0.82))
+                            ForEach(viewModel.transcriptionDiagnosticsHistory.prefix(4), id: \.self) { line in
+                                Text(line)
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundStyle(Color.white.opacity(0.64))
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
                             }
                         }
                     }
-                    ScrollView {
-                        Text(viewModel.lastTranscript.isEmpty ? "Sem texto no momento." : viewModel.lastTranscript)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .font(.body)
-                            .foregroundStyle(.white.opacity(0.9))
-                            .textSelection(.enabled)
-                            .padding(.vertical, 6)
+                }
+
+                DarkCard {
+                    VStack(alignment: .leading, spacing: 10) {
+                        HStack {
+                            Text("Transcrição Atual")
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                            Spacer()
+                            if !viewModel.lastTranscript.isEmpty {
+                                if viewModel.isLoadingTTS {
+                                    ProgressView()
+                                        .controlSize(.small)
+                                        .tint(.white)
+                                } else if viewModel.isSpeaking {
+                                    Button {
+                                        viewModel.stopSpeaking()
+                                    } label: {
+                                        Label("Parar", systemImage: "stop.fill")
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(.red)
+                                    .controlSize(.small)
+                                } else {
+                                    Button {
+                                        viewModel.speakText(viewModel.lastTranscript)
+                                    } label: {
+                                        Label("Ouvir", systemImage: "speaker.wave.2.fill")
+                                            .font(.caption.weight(.semibold))
+                                    }
+                                    .buttonStyle(.bordered)
+                                    .tint(.white)
+                                    .controlSize(.small)
+                                }
+                            }
+                        }
+                        ScrollView {
+                            Text(viewModel.lastTranscript.isEmpty ? "Sem texto no momento." : viewModel.lastTranscript)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .font(.body)
+                                .foregroundStyle(.white.opacity(0.9))
+                                .textSelection(.enabled)
+                                .padding(.vertical, 6)
+                        }
+                        .frame(minHeight: 180, maxHeight: 260)
                     }
-                    .frame(minHeight: 260)
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 8)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 
@@ -240,7 +245,7 @@ private struct OptionsPage: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
     var body: some View {
-        ScrollView {
+        ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 14) {
                 DarkCard {
                     VStack(alignment: .leading, spacing: 10) {
@@ -503,8 +508,10 @@ private struct OptionsPage: View {
                     }
                 }
             }
+            .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 8)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 }
 

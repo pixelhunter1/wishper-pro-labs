@@ -19,12 +19,13 @@ struct WishperProApp: App {
     var body: some Scene {
         WindowGroup("Wishper Pro") {
             ContentView(viewModel: viewModel)
-                .frame(minWidth: 540, minHeight: 620)
+                .frame(minWidth: 540, minHeight: 480)
                 .onAppear {
                     floatingBubbleController.start()
                 }
         }
-        .windowResizability(.contentSize)
+        .defaultSize(width: 760, height: 700)
+        .windowResizability(.automatic)
     }
 }
 
