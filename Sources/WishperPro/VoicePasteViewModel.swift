@@ -8,6 +8,7 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var isRecording = false
     @Published var isTranscribing = false
     @Published var autoPasteEnabled = true
+    @Published var selectedHotkeyID = HotkeyShortcut.default.id
     @Published var statusMessage = "Pronto para ditar."
     @Published var isStatusError = false
     @Published var lastTranscript = ""
@@ -34,6 +35,10 @@ final class VoicePasteViewModel: ObservableObject {
         isTranscribing || (!isRecording && !isAPIKeySaved)
     }
 
+    var availableHotkeys: [HotkeyShortcut] {
+        HotkeyShortcut.presets
+    }
+
     var bubbleStateTitle: String {
         if isTranscribing { return "A transcrever" }
         if isRecording { return isSpeechDetected ? "A falar" : "A ouvir" }
@@ -55,6 +60,8 @@ final class VoicePasteViewModel: ObservableObject {
     private var transcriptionTask: Task<Void, Never>?
     private var audioMeterTask: Task<Void, Never>?
     private var activeAPIKey: String?
+    private var activeShortcut: HotkeyShortcut = .default
+    private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey"
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -65,20 +72,31 @@ final class VoicePasteViewModel: ObservableObject {
 
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
 
-        let result = hotkeyMonitor.start { [weak self] in
-            guard let self else { return }
-            Task {
-                await self.toggleRecording(origin: .hotkey)
-            }
-        }
+        let storedID = UserDefaults.standard.string(forKey: Self.hotkeyDefaultsKey)
+        let preferredShortcut = HotkeyShortcut.byID(storedID ?? "") ?? .default
+        selectedHotkeyID = preferredShortcut.id
 
-        switch result {
-        case .registered(let shortcutLabel):
-            hotkeyLabel = shortcutLabel
-            isHotkeyReady = true
-        case .failed(let message):
-            isHotkeyReady = false
-            setStatus("\(message) Usa o botão Iniciar Ditado.", isError: true)
+        let registerPreferredResult = registerHotkey(preferredShortcut)
+        switch registerPreferredResult {
+        case .registered:
+            applyRegisteredHotkey(preferredShortcut, persistSelection: false)
+        case .failed:
+            if preferredShortcut != .default {
+                let fallback = HotkeyShortcut.default
+                switch registerHotkey(fallback) {
+                case .registered:
+                    applyRegisteredHotkey(fallback, persistSelection: true)
+                    setStatus("Atalho anterior indisponível. Aplicado \(fallback.label).", isError: true)
+                case .failed(let message):
+                    isHotkeyReady = false
+                    hotkeyLabel = preferredShortcut.label
+                    setStatus("\(message) Usa o botão Iniciar Ditado.", isError: true)
+                }
+            } else if case .failed(let message) = registerPreferredResult {
+                isHotkeyReady = false
+                hotkeyLabel = preferredShortcut.label
+                setStatus("\(message) Usa o botão Iniciar Ditado.", isError: true)
+            }
         }
     }
 
@@ -137,6 +155,25 @@ final class VoicePasteViewModel: ObservableObject {
                 "Ativa em Definições do Sistema > Privacidade e Segurança > Acessibilidade.",
                 isError: true
             )
+        }
+    }
+
+    func updatePushToTalkShortcut(_ shortcutID: String) {
+        guard let newShortcut = HotkeyShortcut.byID(shortcutID) else { return }
+        guard newShortcut != activeShortcut else { return }
+
+        let previousShortcut = activeShortcut
+        selectedHotkeyID = newShortcut.id
+
+        switch registerHotkey(newShortcut) {
+        case .registered:
+            applyRegisteredHotkey(newShortcut, persistSelection: true)
+            setStatus("Atalho push-to-talk atualizado para \(newShortcut.label).", isError: false)
+        case .failed(let message):
+            _ = registerHotkey(previousShortcut)
+            applyRegisteredHotkey(previousShortcut, persistSelection: false)
+            selectedHotkeyID = previousShortcut.id
+            setStatus(message, isError: true)
         }
     }
 
@@ -306,6 +343,26 @@ final class VoicePasteViewModel: ObservableObject {
         audioMeterTask = nil
         audioLevel = 0
         isSpeechDetected = false
+    }
+
+    private func registerHotkey(_ shortcut: HotkeyShortcut) -> HotkeyRegistrationResult {
+        hotkeyMonitor.start(shortcut: shortcut) { [weak self] in
+            guard let self else { return }
+            Task {
+                await self.toggleRecording(origin: .hotkey)
+            }
+        }
+    }
+
+    private func applyRegisteredHotkey(_ shortcut: HotkeyShortcut, persistSelection: Bool) {
+        activeShortcut = shortcut
+        hotkeyLabel = shortcut.label
+        selectedHotkeyID = shortcut.id
+        isHotkeyReady = true
+
+        if persistSelection {
+            UserDefaults.standard.set(shortcut.id, forKey: Self.hotkeyDefaultsKey)
+        }
     }
 
     private func setStatus(_ message: String, isError: Bool) {

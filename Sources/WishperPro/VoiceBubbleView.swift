@@ -16,10 +16,10 @@ struct VoiceBubbleView: View {
     var body: some View {
         ZStack(alignment: .leading) {
             RoundedRectangle(cornerRadius: 14, style: .continuous)
-                .fill(.ultraThinMaterial)
+                .fill(Color.black.opacity(0.72))
                 .overlay(
                     RoundedRectangle(cornerRadius: 14, style: .continuous)
-                        .stroke(Color.secondary.opacity(0.24), lineWidth: 1)
+                        .stroke(Color.white.opacity(0.18), lineWidth: 1)
                 )
 
             RoundedRectangle(cornerRadius: 14, style: .continuous)
@@ -36,9 +36,10 @@ struct VoiceBubbleView: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(title)
                         .font(.caption.weight(.semibold))
+                        .foregroundStyle(.white)
                     Text(subtitle)
                         .font(.caption2)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.white.opacity(0.72))
                 }
             }
             .padding(.horizontal, 12)
