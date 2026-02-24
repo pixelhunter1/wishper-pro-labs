@@ -80,7 +80,13 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     var availableTTSVoices: [TTSVoice] {
-        selectedTTSModel.supportedVoices
+        TTSVoice.allCases
+    }
+
+    var ttsCompatibilityHint: String? {
+        let supportedVoices = selectedTTSModel.supportedVoices
+        guard supportedVoices.count < TTSVoice.allCases.count else { return nil }
+        return "Este modelo mostra todas as vozes, mas só suporta \(supportedVoices.count)."
     }
 
     private let keychain = KeychainService()
@@ -189,6 +195,13 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     func onTTSVoiceChanged() {
+        if !selectedTTSModel.supportedVoices.contains(selectedTTSVoice) {
+            selectedTTSModel = .gpt4oMiniTTS
+            setStatus(
+                "Voz \(selectedTTSVoice.displayName) requer modelo avançado. Alterado para GPT-4o Mini TTS.",
+                isError: false
+            )
+        }
         onTTSSettingsChanged()
     }
 

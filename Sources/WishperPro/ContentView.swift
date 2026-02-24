@@ -379,7 +379,11 @@ private struct OptionsPage: View {
 
                         Picker("Voz", selection: $viewModel.selectedTTSVoice) {
                             ForEach(viewModel.availableTTSVoices) { voice in
-                                Text("\(voice.displayName) — \(voice.description)")
+                                Text(
+                                    viewModel.selectedTTSModel.supportedVoices.contains(voice)
+                                        ? "\(voice.displayName) — \(voice.description)"
+                                        : "\(voice.displayName) — \(voice.description) (requer GPT-4o Mini TTS)"
+                                )
                                     .tag(voice)
                             }
                         }
@@ -410,6 +414,12 @@ private struct OptionsPage: View {
                         .tint(.white)
                         .onChange(of: viewModel.selectedPortugueseVariant) { _ in
                             viewModel.onPortugueseVariantChanged()
+                        }
+
+                        if let ttsCompatibilityHint = viewModel.ttsCompatibilityHint {
+                            Text(ttsCompatibilityHint)
+                                .font(.caption)
+                                .foregroundStyle(Color.white.opacity(0.66))
                         }
 
                         HStack(spacing: 10) {
