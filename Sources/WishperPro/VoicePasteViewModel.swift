@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import Foundation
 import SwiftUI
 
@@ -8,7 +9,6 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var isRecording = false
     @Published var isTranscribing = false
     @Published var autoPasteEnabled = true
-    @Published var selectedHotkeyID = HotkeyShortcut.default.id
     @Published var statusMessage = "Pronto para ditar."
     @Published var isStatusError = false
     @Published var lastTranscript = ""
@@ -18,6 +18,7 @@ final class VoicePasteViewModel: ObservableObject {
     @Published private(set) var hasAccessibilityPermission = false
     @Published private(set) var hotkeyLabel = "Option + Space"
     @Published private(set) var isHotkeyReady = false
+    @Published private(set) var isCapturingHotkey = false
 
     var keyStatusText: String {
         isAPIKeySaved
@@ -35,8 +36,10 @@ final class VoicePasteViewModel: ObservableObject {
         isTranscribing || (!isRecording && !isAPIKeySaved)
     }
 
-    var availableHotkeys: [HotkeyShortcut] {
-        HotkeyShortcut.presets
+    var hotkeyCaptureHint: String {
+        isCapturingHotkey
+            ? "Pressiona agora a combinação desejada (Esc para cancelar)."
+            : "Define qualquer combinação diretamente pelo teclado."
     }
 
     var bubbleStateTitle: String {
@@ -61,7 +64,10 @@ final class VoicePasteViewModel: ObservableObject {
     private var audioMeterTask: Task<Void, Never>?
     private var activeAPIKey: String?
     private var activeShortcut: HotkeyShortcut = .default
-    private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey"
+    private var localCaptureMonitor: Any?
+    private var globalCaptureMonitor: Any?
+    private var hotkeySuspendedForCapture = false
+    private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey_data"
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -72,9 +78,7 @@ final class VoicePasteViewModel: ObservableObject {
 
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
 
-        let storedID = UserDefaults.standard.string(forKey: Self.hotkeyDefaultsKey)
-        let preferredShortcut = HotkeyShortcut.byID(storedID ?? "") ?? .default
-        selectedHotkeyID = preferredShortcut.id
+        let preferredShortcut = loadPersistedHotkey() ?? .default
 
         let registerPreferredResult = registerHotkey(preferredShortcut)
         switch registerPreferredResult {
@@ -158,23 +162,44 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
-    func updatePushToTalkShortcut(_ shortcutID: String) {
-        guard let newShortcut = HotkeyShortcut.byID(shortcutID) else { return }
-        guard newShortcut != activeShortcut else { return }
+    func beginHotkeyCapture() {
+        guard !isCapturingHotkey else { return }
 
-        let previousShortcut = activeShortcut
-        selectedHotkeyID = newShortcut.id
+        stopCaptureMonitors()
+        isCapturingHotkey = true
+        hotkeySuspendedForCapture = true
+        isHotkeyReady = false
+        hotkeyMonitor.stop()
 
-        switch registerHotkey(newShortcut) {
-        case .registered:
-            applyRegisteredHotkey(newShortcut, persistSelection: true)
-            setStatus("Atalho push-to-talk atualizado para \(newShortcut.label).", isError: false)
-        case .failed(let message):
-            _ = registerHotkey(previousShortcut)
-            applyRegisteredHotkey(previousShortcut, persistSelection: false)
-            selectedHotkeyID = previousShortcut.id
-            setStatus(message, isError: true)
+        NSApp.activate(ignoringOtherApps: true)
+        if let keyWindow = NSApp.keyWindow ?? NSApp.windows.first {
+            keyWindow.makeKeyAndOrderFront(nil)
+            keyWindow.makeFirstResponder(keyWindow.contentView)
         }
+
+        setStatus("Pressiona a nova combinação de teclas (Esc para cancelar).", isError: false)
+
+        localCaptureMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return event }
+            guard self.isCapturingHotkey else { return event }
+            return self.handleCaptureEvent(event, consume: true) ? nil : event
+        }
+
+        globalCaptureMonitor = NSEvent.addGlobalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self else { return }
+            guard self.isCapturingHotkey else { return }
+            _ = self.handleCaptureEvent(event, consume: false)
+        }
+    }
+
+    func cancelHotkeyCapture() {
+        guard isCapturingHotkey else { return }
+        stopCaptureMonitors()
+        isCapturingHotkey = false
+        restoreCurrentHotkeyAfterCapture(
+            statusMessage: "Captura de atalho cancelada.",
+            isError: false
+        )
     }
 
     func cancelTranscription() {
@@ -354,14 +379,125 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
+    private func finishHotkeyCapture(_ newShortcut: HotkeyShortcut) {
+        stopCaptureMonitors()
+        isCapturingHotkey = false
+
+        if newShortcut == activeShortcut {
+            restoreCurrentHotkeyAfterCapture(
+                statusMessage: "Atalho mantido em \(newShortcut.label).",
+                isError: false
+            )
+            return
+        }
+
+        let previousShortcut = activeShortcut
+        switch registerHotkey(newShortcut) {
+        case .registered:
+            hotkeySuspendedForCapture = false
+            applyRegisteredHotkey(newShortcut, persistSelection: true)
+            setStatus("Atalho push-to-talk atualizado para \(newShortcut.label).", isError: false)
+        case .failed(let message):
+            _ = registerHotkey(previousShortcut)
+            hotkeySuspendedForCapture = false
+            applyRegisteredHotkey(previousShortcut, persistSelection: false)
+            setStatus(message, isError: true)
+        }
+    }
+
+    private func handleCaptureEvent(_ event: NSEvent, consume: Bool) -> Bool {
+        if event.keyCode == UInt16(kVK_Escape) {
+            cancelHotkeyCapture()
+            return true
+        }
+
+        if Self.isModifierKey(event.keyCode) {
+            return consume
+        }
+
+        let shortcut = makeShortcut(from: event)
+        finishHotkeyCapture(shortcut)
+        return true
+    }
+
+    private func makeShortcut(from event: NSEvent) -> HotkeyShortcut {
+        HotkeyShortcut(
+            keyCode: UInt32(event.keyCode),
+            modifiers: carbonModifiers(from: event.modifierFlags)
+        )
+    }
+
+    private func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
+        let normalized = flags.intersection(.deviceIndependentFlagsMask)
+        var value: UInt32 = 0
+        if normalized.contains(.control) { value |= UInt32(controlKey) }
+        if normalized.contains(.option) { value |= UInt32(optionKey) }
+        if normalized.contains(.shift) { value |= UInt32(shiftKey) }
+        if normalized.contains(.command) { value |= UInt32(cmdKey) }
+        return value
+    }
+
+    private static func isModifierKey(_ keyCode: UInt16) -> Bool {
+        switch Int(keyCode) {
+        case kVK_Command, kVK_RightCommand,
+             kVK_Shift, kVK_RightShift,
+             kVK_Option, kVK_RightOption,
+             kVK_Control, kVK_RightControl,
+             kVK_CapsLock, kVK_Function:
+            return true
+        default:
+            return false
+        }
+    }
+
+    private func stopCaptureMonitors() {
+        if let localCaptureMonitor {
+            NSEvent.removeMonitor(localCaptureMonitor)
+            self.localCaptureMonitor = nil
+        }
+
+        if let globalCaptureMonitor {
+            NSEvent.removeMonitor(globalCaptureMonitor)
+            self.globalCaptureMonitor = nil
+        }
+    }
+
+    private func restoreCurrentHotkeyAfterCapture(statusMessage: String, isError: Bool) {
+        if hotkeySuspendedForCapture {
+            switch registerHotkey(activeShortcut) {
+            case .registered:
+                hotkeySuspendedForCapture = false
+                applyRegisteredHotkey(activeShortcut, persistSelection: false)
+                setStatus(statusMessage, isError: isError)
+            case .failed(let message):
+                hotkeySuspendedForCapture = false
+                isHotkeyReady = false
+                setStatus(message, isError: true)
+            }
+        } else {
+            setStatus(statusMessage, isError: isError)
+        }
+    }
+
+    private func loadPersistedHotkey() -> HotkeyShortcut? {
+        guard let data = UserDefaults.standard.data(forKey: Self.hotkeyDefaultsKey) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
+    }
+
+    private func persistHotkey(_ shortcut: HotkeyShortcut) {
+        guard let data = try? JSONEncoder().encode(shortcut) else { return }
+        UserDefaults.standard.set(data, forKey: Self.hotkeyDefaultsKey)
+    }
+
     private func applyRegisteredHotkey(_ shortcut: HotkeyShortcut, persistSelection: Bool) {
         activeShortcut = shortcut
         hotkeyLabel = shortcut.label
-        selectedHotkeyID = shortcut.id
         isHotkeyReady = true
 
         if persistSelection {
-            UserDefaults.standard.set(shortcut.id, forKey: Self.hotkeyDefaultsKey)
+            persistHotkey(shortcut)
         }
     }
 

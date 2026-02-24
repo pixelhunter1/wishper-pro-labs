@@ -9,7 +9,7 @@ App nativa em Swift para ditado com OpenAI, sem login, com auto-paste no campo a
 - Envia para `POST /v1/audio/transcriptions` da OpenAI.
 - Recebe texto transcrito e cola automaticamente onde o cursor de texto estiver ativo.
 - Atalho global: `Option + Space` para iniciar/parar.
-- Atalho push-to-talk configurável nas Opções (com persistência local).
+- Atalho push-to-talk totalmente configurável nas Opções (captura direta de teclado, com persistência local).
 - Bubble dinâmico `150x50` com estado de voz (`A ouvir`, `A falar`, `A transcrever`).
 - Bubble flutuante no desktop durante gravação/transcrição, mesmo com janela principal minimizada.
 - Bip no início e no fim da gravação.

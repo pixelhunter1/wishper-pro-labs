@@ -235,17 +235,33 @@ private struct OptionsPage: View {
                             .font(.headline)
                             .foregroundStyle(.white)
 
-                        Picker("Atalho global", selection: $viewModel.selectedHotkeyID) {
-                            ForEach(viewModel.availableHotkeys) { shortcut in
-                                Text(shortcut.label).tag(shortcut.id)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .onChange(of: viewModel.selectedHotkeyID) { newID in
-                            viewModel.updatePushToTalkShortcut(newID)
+                        HStack {
+                            Text("Atalho atual")
+                                .font(.caption)
+                                .foregroundStyle(Color.white.opacity(0.66))
+                            Spacer()
+                            Text(viewModel.hotkeyLabel)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(.white)
                         }
 
-                        Text("O atalho é aplicado imediatamente e guardado localmente.")
+                        HStack(spacing: 10) {
+                            Button(viewModel.isCapturingHotkey ? "A Capturar..." : "Capturar Novo Atalho") {
+                                viewModel.beginHotkeyCapture()
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(viewModel.isCapturingHotkey)
+
+                            if viewModel.isCapturingHotkey {
+                                Button("Cancelar") {
+                                    viewModel.cancelHotkeyCapture()
+                                }
+                                .buttonStyle(.bordered)
+                                .tint(.white)
+                            }
+                        }
+
+                        Text(viewModel.hotkeyCaptureHint)
                             .font(.caption)
                             .foregroundStyle(Color.white.opacity(0.66))
                     }
