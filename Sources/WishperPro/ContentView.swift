@@ -247,163 +247,201 @@ private struct OptionsPage: View {
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: 14) {
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("API OpenAI")
-                            .font(.headline)
+                apiSettingsCard
+                hotkeySettingsCard
+                transcriptionSettingsCard
+                translationSettingsCard
+                ttsSettingsCard
+                behaviorSettingsCard
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.bottom, 8)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var apiSettingsCard: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsCardHeader(
+                    title: "API OpenAI",
+                    subtitle: "Gerir credenciais de acesso para transcrição, tradução e voz."
+                )
+
+                SettingsSubgroup("Chave de API") {
+                    SecureField("sk-...", text: $viewModel.apiKeyDraft)
+                        .textFieldStyle(.plain)
+                        .padding(10)
+                        .background(
+                            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                .fill(Color.white.opacity(0.08))
+                        )
+                        .foregroundStyle(.white)
+                }
+
+                SettingsSubgroup("Ações") {
+                    HStack(spacing: 10) {
+                        Button("Colar") {
+                            viewModel.pasteAPIKeyFromClipboard()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+
+                        Button("Guardar Key") {
+                            viewModel.saveAPIKey()
+                        }
+                        .buttonStyle(.borderedProminent)
+
+                        Button("Remover") {
+                            viewModel.clearAPIKey()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                    }
+                }
+
+                SettingsInfoText(viewModel.keyStatusText)
+            }
+        }
+    }
+
+    private var hotkeySettingsCard: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsCardHeader(
+                    title: "Push-to-Talk",
+                    subtitle: "Define a combinação para iniciar e parar o ditado."
+                )
+
+                SettingsSubgroup("Atalho atual") {
+                    HStack {
+                        Text("Combinação")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.66))
+                        Spacer()
+                        Text(viewModel.hotkeyLabel)
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(.white)
+                    }
+                }
 
-                        SecureField("sk-...", text: $viewModel.apiKeyDraft)
-                            .textFieldStyle(.plain)
-                            .padding(10)
-                            .background(
-                                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
-                            )
-                            .foregroundStyle(.white)
+                SettingsSubgroup("Captura") {
+                    HStack(spacing: 10) {
+                        Button(viewModel.isCapturingHotkey ? "A Capturar..." : "Capturar Novo Atalho") {
+                            viewModel.beginHotkeyCapture()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(viewModel.isCapturingHotkey)
 
-                        HStack(spacing: 10) {
-                            Button("Colar") {
-                                viewModel.pasteAPIKeyFromClipboard()
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.white)
-
-                            Button("Guardar Key") {
-                                viewModel.saveAPIKey()
-                            }
-                            .buttonStyle(.borderedProminent)
-
-                            Button("Remover") {
-                                viewModel.clearAPIKey()
+                        if viewModel.isCapturingHotkey {
+                            Button("Cancelar") {
+                                viewModel.cancelHotkeyCapture()
                             }
                             .buttonStyle(.bordered)
                             .tint(.white)
                         }
+                    }
+                    SettingsInfoText(viewModel.hotkeyCaptureHint)
+                }
+            }
+        }
+    }
 
-                        Text(viewModel.keyStatusText)
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.66))
+    private var transcriptionSettingsCard: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsCardHeader(
+                    title: "Modelo de Transcrição",
+                    subtitle: "Escolhe o modelo usado no endpoint de transcrição."
+                )
+
+                SettingsSubgroup("Modelo") {
+                    Picker("Modelo", selection: $viewModel.selectedTranscriptionModel) {
+                        ForEach(TranscriptionModel.allCases) { model in
+                            Text("\(model.displayName) — \(model.subtitle)")
+                                .tag(model)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .tint(.white)
+                    .onChange(of: viewModel.selectedTranscriptionModel) { _ in
+                        viewModel.onTranscriptionModelChanged()
                     }
                 }
+            }
+        }
+    }
 
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Push-to-Talk")
-                            .font(.headline)
-                            .foregroundStyle(.white)
+    private var translationSettingsCard: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsCardHeader(
+                    title: "Tradução",
+                    subtitle: "Configura tradução automática após a transcrição."
+                )
 
-                        HStack {
-                            Text("Atalho atual")
+                SettingsSubgroup("Automação") {
+                    Toggle("Traduzir automaticamente após transcrição", isOn: $viewModel.translationEnabled)
+                        .toggleStyle(.switch)
+                        .onChange(of: viewModel.translationEnabled) { _ in
+                            viewModel.onTranslationSettingsChanged()
+                        }
+                }
+
+                SettingsSubgroup("Línguas") {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Língua de origem")
                                 .font(.caption)
                                 .foregroundStyle(Color.white.opacity(0.66))
-                            Spacer()
-                            Text(viewModel.hotkeyLabel)
-                                .font(.caption.weight(.semibold))
-                                .foregroundStyle(.white)
-                        }
-
-                        HStack(spacing: 10) {
-                            Button(viewModel.isCapturingHotkey ? "A Capturar..." : "Capturar Novo Atalho") {
-                                viewModel.beginHotkeyCapture()
-                            }
-                            .buttonStyle(.borderedProminent)
-                            .disabled(viewModel.isCapturingHotkey)
-
-                            if viewModel.isCapturingHotkey {
-                                Button("Cancelar") {
-                                    viewModel.cancelHotkeyCapture()
+                            Picker("Origem", selection: $viewModel.selectedSourceLanguage) {
+                                ForEach(SupportedLanguage.allCases) { lang in
+                                    Text(lang.displayName).tag(lang)
                                 }
-                                .buttonStyle(.bordered)
-                                .tint(.white)
                             }
-                        }
-
-                        Text(viewModel.hotkeyCaptureHint)
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.66))
-                    }
-                }
-
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Modelo de Transcrição")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-
-                        Picker("Modelo", selection: $viewModel.selectedTranscriptionModel) {
-                            ForEach(TranscriptionModel.allCases) { model in
-                                Text("\(model.displayName) — \(model.subtitle)")
-                                    .tag(model)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(.white)
-                        .onChange(of: viewModel.selectedTranscriptionModel) { _ in
-                            viewModel.onTranscriptionModelChanged()
-                        }
-                    }
-                }
-
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Tradução")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-
-                        Toggle("Traduzir automaticamente após transcrição", isOn: $viewModel.translationEnabled)
-                            .toggleStyle(.switch)
-                            .onChange(of: viewModel.translationEnabled) { _ in
+                            .pickerStyle(.menu)
+                            .tint(.white)
+                            .onChange(of: viewModel.selectedSourceLanguage) { _ in
                                 viewModel.onTranslationSettingsChanged()
                             }
-
-                        HStack(spacing: 10) {
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Língua de origem")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.white.opacity(0.66))
-                                Picker("Origem", selection: $viewModel.selectedSourceLanguage) {
-                                    ForEach(SupportedLanguage.allCases) { lang in
-                                        Text(lang.displayName).tag(lang)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .tint(.white)
-                                .onChange(of: viewModel.selectedSourceLanguage) { _ in
-                                    viewModel.onTranslationSettingsChanged()
-                                }
-                            }
-
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text("Língua de destino")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.white.opacity(0.66))
-                                Picker("Destino", selection: $viewModel.selectedTargetLanguage) {
-                                    ForEach(SupportedLanguage.targetLanguages) { lang in
-                                        Text(lang.displayName).tag(lang)
-                                    }
-                                }
-                                .pickerStyle(.menu)
-                                .tint(.white)
-                                .onChange(of: viewModel.selectedTargetLanguage) { _ in
-                                    viewModel.onTranslationSettingsChanged()
-                                }
-                            }
                         }
 
-                        Text(viewModel.translationStatusText)
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.7))
-                            .lineLimit(2)
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Língua de destino")
+                                .font(.caption)
+                                .foregroundStyle(Color.white.opacity(0.66))
+                            Picker("Destino", selection: $viewModel.selectedTargetLanguage) {
+                                ForEach(SupportedLanguage.targetLanguages) { lang in
+                                    Text(lang.displayName).tag(lang)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(.white)
+                            .onChange(of: viewModel.selectedTargetLanguage) { _ in
+                                viewModel.onTranslationSettingsChanged()
+                            }
+                        }
                     }
                 }
 
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Voz (Text-to-Speech)")
-                            .font(.headline)
-                            .foregroundStyle(.white)
+                SettingsInfoText(viewModel.translationStatusText)
+            }
+        }
+    }
 
+    private var ttsSettingsCard: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsCardHeader(
+                    title: "Voz (Text-to-Speech)",
+                    subtitle: "Seleciona modelo, voz e variante para reprodução."
+                )
+
+                SettingsSubgroup("Configuração de voz") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Voz")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.66))
                         Picker("Voz", selection: $viewModel.selectedTTSVoice) {
                             ForEach(viewModel.availableTTSVoices) { voice in
                                 Text(
@@ -411,7 +449,7 @@ private struct OptionsPage: View {
                                         ? "\(voice.displayName) — \(voice.description)"
                                         : "\(voice.displayName) — \(voice.description) (requer GPT-4o Mini TTS)"
                                 )
-                                    .tag(voice)
+                                .tag(voice)
                             }
                         }
                         .pickerStyle(.menu)
@@ -419,7 +457,12 @@ private struct OptionsPage: View {
                         .onChange(of: viewModel.selectedTTSVoice) { _ in
                             viewModel.onTTSVoiceChanged()
                         }
+                    }
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Modelo")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.66))
                         Picker("Modelo", selection: $viewModel.selectedTTSModel) {
                             ForEach(TTSModel.allCases) { model in
                                 Text("\(model.displayName) — \(model.subtitle)")
@@ -431,7 +474,12 @@ private struct OptionsPage: View {
                         .onChange(of: viewModel.selectedTTSModel) { _ in
                             viewModel.onTTSModelChanged()
                         }
+                    }
 
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Variante do Português")
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.66))
                         Picker("Variante do Português", selection: $viewModel.selectedPortugueseVariant) {
                             ForEach(PortugueseVariant.allCases) { variant in
                                 Text(variant.displayName).tag(variant)
@@ -442,76 +490,135 @@ private struct OptionsPage: View {
                         .onChange(of: viewModel.selectedPortugueseVariant) { _ in
                             viewModel.onPortugueseVariantChanged()
                         }
-
-                        if let ttsCompatibilityHint = viewModel.ttsCompatibilityHint {
-                            Text(ttsCompatibilityHint)
-                                .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.66))
-                        }
-
-                        Text("Segundo a OpenAI, as vozes atuais estão otimizadas para inglês.")
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.6))
-
-                        HStack(spacing: 10) {
-                            if viewModel.isLoadingTTS {
-                                ProgressView()
-                                    .controlSize(.small)
-                                    .tint(.white)
-                                Text("A gerar preview...")
-                                    .font(.caption)
-                                    .foregroundStyle(Color.white.opacity(0.66))
-                            } else if viewModel.isSpeaking {
-                                Button("Parar Preview") {
-                                    viewModel.stopSpeaking()
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.red)
-                            } else {
-                                Button {
-                                    viewModel.previewTTSVoice(viewModel.selectedTTSVoice)
-                                } label: {
-                                    Label("Ouvir Preview", systemImage: "play.fill")
-                                }
-                                .buttonStyle(.bordered)
-                                .tint(.white)
-                                .disabled(!viewModel.isAPIKeySaved)
-                            }
-                        }
-
-                        Text(viewModel.ttsStatusText)
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.66))
                     }
                 }
 
-                DarkCard {
-                    VStack(alignment: .leading, spacing: 10) {
-                        Text("Comportamento")
-                            .font(.headline)
-                            .foregroundStyle(.white)
-
-                        Toggle("Auto-paste após transcrição", isOn: $viewModel.autoPasteEnabled)
-                            .toggleStyle(.switch)
-
-                        HStack {
-                            Text(viewModel.accessibilityStatusText)
+                SettingsSubgroup("Preview") {
+                    HStack(spacing: 10) {
+                        if viewModel.isLoadingTTS {
+                            ProgressView()
+                                .controlSize(.small)
+                                .tint(.white)
+                            Text("A gerar preview...")
                                 .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.7))
-                            Spacer()
-                            Button("Ativar Accessibilidade") {
-                                viewModel.requestAccessibilityPermission()
+                                .foregroundStyle(Color.white.opacity(0.66))
+                        } else if viewModel.isSpeaking {
+                            Button("Parar Preview") {
+                                viewModel.stopSpeaking()
+                            }
+                            .buttonStyle(.bordered)
+                            .tint(.red)
+                        } else {
+                            Button {
+                                viewModel.previewTTSVoice(viewModel.selectedTTSVoice)
+                            } label: {
+                                Label("Ouvir Preview", systemImage: "play.fill")
                             }
                             .buttonStyle(.bordered)
                             .tint(.white)
+                            .disabled(!viewModel.isAPIKeySaved)
                         }
                     }
                 }
+
+                if let ttsCompatibilityHint = viewModel.ttsCompatibilityHint {
+                    SettingsInfoText(ttsCompatibilityHint)
+                }
+
+                SettingsInfoText("Segundo a OpenAI, as vozes atuais estão otimizadas para inglês.")
+                SettingsInfoText(viewModel.ttsStatusText)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .padding(.bottom, 8)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+    }
+
+    private var behaviorSettingsCard: some View {
+        DarkCard {
+            VStack(alignment: .leading, spacing: 10) {
+                SettingsCardHeader(
+                    title: "Comportamento",
+                    subtitle: "Define como o texto é aplicado e que permissões estão ativas."
+                )
+
+                SettingsSubgroup("Fluxo de texto") {
+                    Toggle("Auto-paste após transcrição", isOn: $viewModel.autoPasteEnabled)
+                        .toggleStyle(.switch)
+                }
+
+                SettingsSubgroup("Acessibilidade") {
+                    HStack {
+                        Text(viewModel.accessibilityStatusText)
+                            .font(.caption)
+                            .foregroundStyle(Color.white.opacity(0.7))
+                        Spacer()
+                        Button("Ativar Accessibilidade") {
+                            viewModel.requestAccessibilityPermission()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private struct SettingsCardHeader: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.headline)
+                .foregroundStyle(.white)
+            Text(subtitle)
+                .font(.caption)
+                .foregroundStyle(Color.white.opacity(0.66))
+        }
+    }
+}
+
+private struct SettingsSubgroup<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: Content
+
+    init(_ title: String, @ViewBuilder content: () -> Content) {
+        self.title = title
+        self.content = content()
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(title.uppercased())
+                .font(.caption2.weight(.semibold))
+                .foregroundStyle(Color.white.opacity(0.55))
+            content
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(Color.white.opacity(0.05))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+        )
+    }
+}
+
+private struct SettingsInfoText: View {
+    let text: String
+
+    init(_ text: String) {
+        self.text = text
+    }
+
+    var body: some View {
+        Text(text)
+            .font(.caption)
+            .foregroundStyle(Color.white.opacity(0.66))
+            .lineLimit(3)
     }
 }
 
