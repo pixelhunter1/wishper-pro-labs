@@ -29,6 +29,8 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var selectedTTSVoice: TTSVoice = .alloy
     @Published var selectedTTSModel: TTSModel = .gpt4oMiniTTS
     @Published var selectedPortugueseVariant: PortugueseVariant = .portugal
+    @Published var selectedStartCueSound: RecordingCueSound = .pop
+    @Published var selectedStopCueSound: RecordingCueSound = .tink
     @Published private(set) var isSpeaking = false
     @Published private(set) var isLoadingTTS = false
 
@@ -81,8 +83,16 @@ final class VoicePasteViewModel: ObservableObject {
         "Voz ativa: \(selectedTTSVoice.displayName) (\(selectedTTSModel.subtitle), \(selectedPortugueseVariant.displayName))"
     }
 
+    var recordingCueStatusText: String {
+        "Início: \(selectedStartCueSound.displayName) | Fim: \(selectedStopCueSound.displayName)"
+    }
+
     var availableTTSVoices: [TTSVoice] {
         TTSVoice.allCases
+    }
+
+    var availableRecordingCueSounds: [RecordingCueSound] {
+        RecordingCueSound.allCases
     }
 
     var ttsCompatibilityHint: String? {
@@ -116,6 +126,8 @@ final class VoicePasteViewModel: ObservableObject {
     private static let ttsVoiceDefaultsKey = "wishper.tts_voice"
     private static let ttsModelDefaultsKey = "wishper.tts_model"
     private static let portugueseVariantDefaultsKey = "wishper.portuguese_variant"
+    private static let startCueSoundDefaultsKey = "wishper.start_cue_sound"
+    private static let stopCueSoundDefaultsKey = "wishper.stop_cue_sound"
     private static let transcriptionTimeoutSeconds: TimeInterval = 30
     private static let transcriptionMaxRetries = 0
 
@@ -211,6 +223,11 @@ final class VoicePasteViewModel: ObservableObject {
 
     func onTTSModelChanged() {
         onTTSSettingsChanged()
+    }
+
+    func onRecordingCueSettingsChanged() {
+        UserDefaults.standard.set(selectedStartCueSound.rawValue, forKey: Self.startCueSoundDefaultsKey)
+        UserDefaults.standard.set(selectedStopCueSound.rawValue, forKey: Self.stopCueSoundDefaultsKey)
     }
 
     func pasteAPIKeyFromClipboard() {
@@ -401,7 +418,7 @@ final class VoicePasteViewModel: ObservableObject {
             isRecording = true
             lastTranscript = ""
             startAudioMetering()
-            soundCuePlayer.playStartCue()
+            soundCuePlayer.playStartCue(selectedStartCueSound)
             let message: String
             switch origin {
             case .hotkey:
@@ -431,7 +448,7 @@ final class VoicePasteViewModel: ObservableObject {
 
         isRecording = false
         stopAudioMetering()
-        soundCuePlayer.playStopCue()
+        soundCuePlayer.playStopCue(selectedStopCueSound)
         isTranscribing = true
         setStatus("A transcrever áudio...", isError: false)
         transcriptionTask?.cancel()
@@ -812,6 +829,16 @@ final class VoicePasteViewModel: ObservableObject {
         if let variantRaw = UserDefaults.standard.string(forKey: Self.portugueseVariantDefaultsKey),
            let variant = PortugueseVariant(rawValue: variantRaw) {
             selectedPortugueseVariant = variant
+        }
+
+        if let startCueRaw = UserDefaults.standard.string(forKey: Self.startCueSoundDefaultsKey),
+           let startCue = RecordingCueSound(rawValue: startCueRaw) {
+            selectedStartCueSound = startCue
+        }
+
+        if let stopCueRaw = UserDefaults.standard.string(forKey: Self.stopCueSoundDefaultsKey),
+           let stopCue = RecordingCueSound(rawValue: stopCueRaw) {
+            selectedStopCueSound = stopCue
         }
 
         normalizeTTSSelection()

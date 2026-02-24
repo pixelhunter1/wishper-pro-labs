@@ -633,6 +633,44 @@ private struct OptionsPage: View {
                         .toggleStyle(.switch)
                 }
 
+                SettingsSubgroup("Sons de gravação") {
+                    HStack(spacing: 10) {
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Som ao iniciar")
+                                .font(.caption)
+                                .foregroundStyle(Color.white.opacity(0.66))
+                            Picker("Som ao iniciar", selection: $viewModel.selectedStartCueSound) {
+                                ForEach(viewModel.availableRecordingCueSounds) { cue in
+                                    Text(cue.displayName).tag(cue)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(.white)
+                            .onChange(of: viewModel.selectedStartCueSound) { _ in
+                                viewModel.onRecordingCueSettingsChanged()
+                            }
+                        }
+
+                        VStack(alignment: .leading, spacing: 6) {
+                            Text("Som ao terminar")
+                                .font(.caption)
+                                .foregroundStyle(Color.white.opacity(0.66))
+                            Picker("Som ao terminar", selection: $viewModel.selectedStopCueSound) {
+                                ForEach(viewModel.availableRecordingCueSounds) { cue in
+                                    Text(cue.displayName).tag(cue)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .tint(.white)
+                            .onChange(of: viewModel.selectedStopCueSound) { _ in
+                                viewModel.onRecordingCueSettingsChanged()
+                            }
+                        }
+                    }
+
+                    SettingsInfoText(viewModel.recordingCueStatusText)
+                }
+
                 SettingsSubgroup("Acessibilidade") {
                     HStack {
                         Text(viewModel.accessibilityStatusText)
