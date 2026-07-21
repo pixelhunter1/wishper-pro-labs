@@ -23,9 +23,9 @@ final class FloatingBubbleController: ObservableObject {
     }
 
     private func bindState() {
-        Publishers.CombineLatest3(viewModel.$isRecording, viewModel.$isTranscribing, viewModel.$isSpeaking)
+        Publishers.CombineLatest(viewModel.$isRecording, viewModel.$isTranscribing)
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _, _ in
+            .sink { [weak self] _, _ in
                 self?.updateVisibility()
             }
             .store(in: &cancellables)
@@ -47,7 +47,7 @@ final class FloatingBubbleController: ObservableObject {
 
     private func updateVisibility() {
         guard let panel else { return }
-        let shouldShow = viewModel.isRecording || viewModel.isTranscribing || viewModel.isSpeaking
+        let shouldShow = viewModel.isRecording || viewModel.isTranscribing
         if shouldShow {
             positionPanel(panel)
             panel.orderFrontRegardless()

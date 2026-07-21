@@ -60,7 +60,6 @@ private enum UIStyle {
 struct ContentView: View {
     @ObservedObject var viewModel: VoicePasteViewModel
     @State private var selectedSection: AppSection = .home
-    @State private var isDiagnosticsExpanded = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: UIStyle.contentSpacing) {
@@ -69,10 +68,7 @@ struct ContentView: View {
             Group {
                 switch selectedSection {
                 case .home:
-                    HomePage(
-                        viewModel: viewModel,
-                        isDiagnosticsExpanded: $isDiagnosticsExpanded
-                    )
+                    HomePage(viewModel: viewModel)
                 case .options:
                     OptionsPage(viewModel: viewModel)
                 }
@@ -140,17 +136,12 @@ struct ContentView: View {
 
 private struct HomePage: View {
     @ObservedObject var viewModel: VoicePasteViewModel
-    @Binding var isDiagnosticsExpanded: Bool
 
     var body: some View {
         ScrollView(.vertical) {
             VStack(alignment: .leading, spacing: UIStyle.cardSpacing) {
                 HomeHeroCard(viewModel: viewModel)
                 HomeTranscriptCard(viewModel: viewModel)
-                HomeDiagnosticsCard(
-                    viewModel: viewModel,
-                    isExpanded: $isDiagnosticsExpanded
-                )
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(.bottom, 8)
@@ -231,39 +222,9 @@ private struct HomeTranscriptCard: View {
     var body: some View {
         DarkCard {
             VStack(alignment: .leading, spacing: 10) {
-                HStack {
-                    Text("Transcrição Atual")
-                        .font(.headline)
-                        .foregroundStyle(.white)
-                    Spacer()
-                    if !viewModel.lastTranscript.isEmpty {
-                        if viewModel.isLoadingTTS {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(.white)
-                        } else if viewModel.isSpeaking {
-                            Button {
-                                viewModel.stopSpeaking()
-                            } label: {
-                                Label("Parar", systemImage: "stop.fill")
-                                    .font(.caption.weight(.semibold))
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.red)
-                            .controlSize(.small)
-                        } else {
-                            Button {
-                                viewModel.speakText(viewModel.lastTranscript)
-                            } label: {
-                                Label("Ouvir", systemImage: "speaker.wave.2.fill")
-                                    .font(.caption.weight(.semibold))
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.white)
-                            .controlSize(.small)
-                        }
-                    }
-                }
+                Text("Transcrição Atual")
+                    .font(.headline)
+                    .foregroundStyle(.white)
                 ScrollView {
                     Text(viewModel.lastTranscript.isEmpty ? "Sem texto no momento." : viewModel.lastTranscript)
                         .frame(maxWidth: .infinity, alignment: .leading)
@@ -278,54 +239,6 @@ private struct HomeTranscriptCard: View {
     }
 }
 
-private struct HomeDiagnosticsCard: View {
-    @ObservedObject var viewModel: VoicePasteViewModel
-    @Binding var isExpanded: Bool
-
-    var body: some View {
-        DarkCard {
-            DisclosureGroup(isExpanded: $isExpanded) {
-                VStack(alignment: .leading, spacing: UIStyle.compactSpacing) {
-                    Text(viewModel.lastTranscriptionDiagnostics)
-                        .font(.caption.monospacedDigit())
-                        .foregroundStyle(Color.white.opacity(0.58))
-                        .textSelection(.enabled)
-
-                    if !viewModel.transcriptionDiagnosticsHistory.isEmpty {
-                        Divider()
-                            .overlay(Color.white.opacity(UIStyle.cardStrokeOpacity))
-                            .padding(.vertical, 2)
-
-                        Text("Últimas transcrições")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(Color.white.opacity(0.82))
-
-                        ForEach(viewModel.transcriptionDiagnosticsHistory.prefix(4), id: \.self) { line in
-                            Text(line)
-                                .font(.caption2.monospacedDigit())
-                                .foregroundStyle(Color.white.opacity(0.64))
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                    }
-                }
-                .padding(.top, UIStyle.compactSpacing)
-            } label: {
-                HStack {
-                    Label("Diagnóstico técnico", systemImage: "waveform.path.ecg")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.white)
-                    Spacer()
-                    Text(isExpanded ? "Ocultar" : "Mostrar")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(Color.white.opacity(UIStyle.mutedTextOpacity))
-                }
-            }
-            .tint(.white)
-        }
-    }
-}
-
 private struct OptionsPage: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
@@ -334,9 +247,7 @@ private struct OptionsPage: View {
             VStack(alignment: .leading, spacing: 14) {
                 apiSettingsCard
                 hotkeySettingsCard
-                transcriptionSettingsCard
                 translationSettingsCard
-                ttsSettingsCard
                 behaviorSettingsCard
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -350,7 +261,7 @@ private struct OptionsPage: View {
             VStack(alignment: .leading, spacing: 10) {
                 SettingsCardHeader(
                     title: "API OpenAI",
-                    subtitle: "Gerir credenciais de acesso para transcrição, tradução e voz."
+                    subtitle: "Gerir credenciais de acesso para transcrição e tradução."
                 )
 
                 SettingsSubgroup("Chave de API") {
@@ -390,6 +301,16 @@ private struct OptionsPage: View {
                 }
 
                 SettingsInfoText(viewModel.keyStatusText)
+
+                Text(viewModel.statusMessage)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(
+                        viewModel.isStatusError
+                            ? Color.red.opacity(0.95)
+                            : Color(red: 0.45, green: 0.85, blue: 0.55)
+                    )
+                    .textSelection(.enabled)
+                    .lineLimit(2)
             }
         }
     }
@@ -431,31 +352,6 @@ private struct OptionsPage: View {
                         }
                     }
                     SettingsInfoText(viewModel.hotkeyCaptureHint)
-                }
-            }
-        }
-    }
-
-    private var transcriptionSettingsCard: some View {
-        DarkCard {
-            VStack(alignment: .leading, spacing: 10) {
-                SettingsCardHeader(
-                    title: "Modelo de Transcrição",
-                    subtitle: "Escolhe o modelo usado no endpoint de transcrição."
-                )
-
-                SettingsSubgroup("Modelo") {
-                    Picker("Modelo", selection: $viewModel.selectedTranscriptionModel) {
-                        ForEach(TranscriptionModel.allCases) { model in
-                            Text("\(model.displayName) — \(model.subtitle)")
-                                .tag(model)
-                        }
-                    }
-                    .pickerStyle(.menu)
-                    .tint(.white)
-                    .onChange(of: viewModel.selectedTranscriptionModel) { _ in
-                        viewModel.onTranscriptionModelChanged()
-                    }
                 }
             }
         }
@@ -522,108 +418,6 @@ private struct OptionsPage: View {
         }
     }
 
-    private var ttsSettingsCard: some View {
-        DarkCard {
-            VStack(alignment: .leading, spacing: 10) {
-                SettingsCardHeader(
-                    title: "Voz (Text-to-Speech)",
-                    subtitle: "Seleciona modelo, voz e variante para reprodução."
-                )
-
-                SettingsSubgroup("Configuração de voz") {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Voz")
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.66))
-                        Picker("Voz", selection: $viewModel.selectedTTSVoice) {
-                            ForEach(viewModel.availableTTSVoices) { voice in
-                                Text(
-                                    viewModel.selectedTTSModel.supportedVoices.contains(voice)
-                                        ? "\(voice.displayName) — \(voice.description)"
-                                        : "\(voice.displayName) — \(voice.description) (requer GPT-4o Mini TTS)"
-                                )
-                                .tag(voice)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(.white)
-                        .onChange(of: viewModel.selectedTTSVoice) { _ in
-                            viewModel.onTTSVoiceChanged()
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Modelo")
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.66))
-                        Picker("Modelo", selection: $viewModel.selectedTTSModel) {
-                            ForEach(TTSModel.allCases) { model in
-                                Text("\(model.displayName) — \(model.subtitle)")
-                                    .tag(model)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(.white)
-                        .onChange(of: viewModel.selectedTTSModel) { _ in
-                            viewModel.onTTSModelChanged()
-                        }
-                    }
-
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Variante do Português")
-                            .font(.caption)
-                            .foregroundStyle(Color.white.opacity(0.66))
-                        Picker("Variante do Português", selection: $viewModel.selectedPortugueseVariant) {
-                            ForEach(PortugueseVariant.allCases) { variant in
-                                Text(variant.displayName).tag(variant)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .tint(.white)
-                        .onChange(of: viewModel.selectedPortugueseVariant) { _ in
-                            viewModel.onPortugueseVariantChanged()
-                        }
-                    }
-                }
-
-                SettingsSubgroup("Preview") {
-                    HStack(spacing: 10) {
-                        if viewModel.isLoadingTTS {
-                            ProgressView()
-                                .controlSize(.small)
-                                .tint(.white)
-                            Text("A gerar preview...")
-                                .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.66))
-                        } else if viewModel.isSpeaking {
-                            Button("Parar Preview") {
-                                viewModel.stopSpeaking()
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.red)
-                        } else {
-                            Button {
-                                viewModel.previewTTSVoice(viewModel.selectedTTSVoice)
-                            } label: {
-                                Label("Ouvir Preview", systemImage: "play.fill")
-                            }
-                            .buttonStyle(.bordered)
-                            .tint(.white)
-                            .disabled(!viewModel.isAPIKeySaved)
-                        }
-                    }
-                }
-
-                if let ttsCompatibilityHint = viewModel.ttsCompatibilityHint {
-                    SettingsInfoText(ttsCompatibilityHint)
-                }
-
-                SettingsInfoText("Segundo a OpenAI, as vozes atuais estão otimizadas para inglês.")
-                SettingsInfoText(viewModel.ttsStatusText)
-            }
-        }
-    }
-
     private var behaviorSettingsCard: some View {
         DarkCard {
             VStack(alignment: .leading, spacing: 10) {
@@ -635,44 +429,6 @@ private struct OptionsPage: View {
                 SettingsSubgroup("Fluxo de texto") {
                     Toggle("Auto-paste após transcrição", isOn: $viewModel.autoPasteEnabled)
                         .toggleStyle(.switch)
-                }
-
-                SettingsSubgroup("Sons de gravação") {
-                    HStack(spacing: 10) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Som ao iniciar")
-                                .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.66))
-                            Picker("Som ao iniciar", selection: $viewModel.selectedStartCueSound) {
-                                ForEach(viewModel.availableRecordingCueSounds) { cue in
-                                    Text(cue.displayName).tag(cue)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .tint(.white)
-                            .onChange(of: viewModel.selectedStartCueSound) { _ in
-                                viewModel.onRecordingCueSettingsChanged()
-                            }
-                        }
-
-                        VStack(alignment: .leading, spacing: 6) {
-                            Text("Som ao terminar")
-                                .font(.caption)
-                                .foregroundStyle(Color.white.opacity(0.66))
-                            Picker("Som ao terminar", selection: $viewModel.selectedStopCueSound) {
-                                ForEach(viewModel.availableRecordingCueSounds) { cue in
-                                    Text(cue.displayName).tag(cue)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .tint(.white)
-                            .onChange(of: viewModel.selectedStopCueSound) { _ in
-                                viewModel.onRecordingCueSettingsChanged()
-                            }
-                        }
-                    }
-
-                    SettingsInfoText(viewModel.recordingCueStatusText)
                 }
 
                 SettingsSubgroup("Acessibilidade") {

@@ -13,8 +13,6 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var statusMessage = "Pronto para ditar."
     @Published var isStatusError = false
     @Published var lastTranscript = ""
-    @Published private(set) var lastTranscriptionDiagnostics = "Sem métricas de transcrição ainda."
-    @Published private(set) var transcriptionDiagnosticsHistory: [String] = []
     @Published private(set) var audioLevel: Double = 0
     @Published private(set) var isSpeechDetected = false
     @Published private(set) var isAPIKeySaved = false
@@ -22,17 +20,9 @@ final class VoicePasteViewModel: ObservableObject {
     @Published private(set) var hotkeyLabel = "Option + Space"
     @Published private(set) var isHotkeyReady = false
     @Published private(set) var isCapturingHotkey = false
-    @Published var selectedTranscriptionModel: TranscriptionModel = .gpt4oMiniTranscribe
     @Published var translationEnabled = false
     @Published var selectedSourceLanguage: SupportedLanguage = .auto
     @Published var selectedTargetLanguage: SupportedLanguage = .english
-    @Published var selectedTTSVoice: TTSVoice = .alloy
-    @Published var selectedTTSModel: TTSModel = .gpt4oMiniTTS
-    @Published var selectedPortugueseVariant: PortugueseVariant = .portugal
-    @Published var selectedStartCueSound: RecordingCueSound = .pop
-    @Published var selectedStopCueSound: RecordingCueSound = .none
-    @Published private(set) var isSpeaking = false
-    @Published private(set) var isLoadingTTS = false
 
     var keyStatusText: String {
         isAPIKeySaved
@@ -68,10 +58,6 @@ final class VoicePasteViewModel: ObservableObject {
         return "aguardando"
     }
 
-    var modelStatusText: String {
-        "Modelo ativo: \(selectedTranscriptionModel.displayName)"
-    }
-
     var translationStatusText: String {
         guard translationEnabled else {
             return "Tradução desativada."
@@ -79,55 +65,25 @@ final class VoicePasteViewModel: ObservableObject {
         return "Traduzir de \(selectedSourceLanguage.displayName) para \(selectedTargetLanguage.displayName)."
     }
 
-    var ttsStatusText: String {
-        "Voz ativa: \(selectedTTSVoice.displayName) (\(selectedTTSModel.subtitle), \(selectedPortugueseVariant.displayName))"
-    }
-
-    var recordingCueStatusText: String {
-        "Início: \(selectedStartCueSound.displayName) | Fim: \(selectedStopCueSound.displayName)"
-    }
-
-    var availableTTSVoices: [TTSVoice] {
-        TTSVoice.allCases
-    }
-
-    var availableRecordingCueSounds: [RecordingCueSound] {
-        RecordingCueSound.allCases
-    }
-
-    var ttsCompatibilityHint: String? {
-        let supportedVoices = selectedTTSModel.supportedVoices
-        guard supportedVoices.count < TTSVoice.allCases.count else { return nil }
-        return "Este modelo mostra todas as vozes, mas só suporta \(supportedVoices.count)."
-    }
-
     private let keychain = KeychainService()
     private let recorder = AudioRecorder()
     private let transcriptionClient = OpenAITranscriptionClient()
     private let translationClient = OpenAITranslationClient()
-    private let ttsClient = OpenAITTSClient()
     private let autoPaster = AutoPaster()
     private let hotkeyMonitor = GlobalHotkeyMonitor()
     private let soundCuePlayer = SoundCuePlayer()
     private var transcriptionTask: Task<Void, Never>?
     private var audioMeterTask: Task<Void, Never>?
-    private var ttsTask: Task<Void, Never>?
-    private var audioPlayer: AVAudioPlayer?
     private var activeAPIKey: String?
     private var activeShortcut: HotkeyShortcut = .default
     private var localCaptureMonitor: Any?
     private var globalCaptureMonitor: Any?
     private var hotkeySuspendedForCapture = false
     private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey_data"
-    private static let transcriptionModelDefaultsKey = "wishper.transcription_model"
     private static let translationEnabledDefaultsKey = "wishper.translation_enabled"
     private static let translationSourceDefaultsKey = "wishper.translation_source_language"
     private static let translationTargetDefaultsKey = "wishper.translation_target_language"
-    private static let ttsVoiceDefaultsKey = "wishper.tts_voice"
-    private static let ttsModelDefaultsKey = "wishper.tts_model"
-    private static let portugueseVariantDefaultsKey = "wishper.portuguese_variant"
-    private static let startCueSoundDefaultsKey = "wishper.start_cue_sound"
-    private static let stopCueSoundDefaultsKey = "wishper.stop_cue_sound"
+    private static let transcriptionModel = "gpt-4o-mini-transcribe"
     private static let transcriptionTimeoutSeconds: TimeInterval = 30
     private static let transcriptionMaxRetries = 0
 
@@ -197,56 +153,8 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
-    func onTranscriptionModelChanged() {
-        persistTranscriptionModel(selectedTranscriptionModel.rawValue)
-    }
-
     func onTranslationSettingsChanged() {
-        syncPortugueseVariantFromTranslation()
         persistTranslationSettings()
-    }
-
-    func onPortugueseVariantChanged() {
-        if selectedSourceLanguage.isPortuguese {
-            selectedSourceLanguage = selectedPortugueseVariant.supportedLanguage
-        }
-        if selectedTargetLanguage.isPortuguese {
-            selectedTargetLanguage = selectedPortugueseVariant.supportedLanguage
-        }
-        onTTSSettingsChanged()
-        persistTranslationSettings()
-    }
-
-    private func syncPortugueseVariantFromTranslation() {
-        if let variant = selectedTargetLanguage.portugueseVariant {
-            guard selectedPortugueseVariant != variant else { return }
-            selectedPortugueseVariant = variant
-            onTTSSettingsChanged()
-        } else if let variant = selectedSourceLanguage.portugueseVariant {
-            guard selectedPortugueseVariant != variant else { return }
-            selectedPortugueseVariant = variant
-            onTTSSettingsChanged()
-        }
-    }
-
-    func onTTSVoiceChanged() {
-        if !selectedTTSModel.supportedVoices.contains(selectedTTSVoice) {
-            selectedTTSModel = .gpt4oMiniTTS
-            setStatus(
-                "Voz \(selectedTTSVoice.displayName) requer modelo avançado. Alterado para GPT-4o Mini TTS.",
-                isError: false
-            )
-        }
-        onTTSSettingsChanged()
-    }
-
-    func onTTSModelChanged() {
-        onTTSSettingsChanged()
-    }
-
-    func onRecordingCueSettingsChanged() {
-        UserDefaults.standard.set(selectedStartCueSound.rawValue, forKey: Self.startCueSoundDefaultsKey)
-        UserDefaults.standard.set(selectedStopCueSound.rawValue, forKey: Self.stopCueSoundDefaultsKey)
     }
 
     func pasteAPIKeyFromClipboard() {
@@ -326,80 +234,6 @@ final class VoicePasteViewModel: ObservableObject {
         setStatus("Transcrição cancelada.", isError: false)
     }
 
-    func speakText(_ text: String) {
-        stopSpeaking()
-        guard let apiKey = activeAPIKey, !apiKey.isEmpty else {
-            setStatus("Guarda a API key para usar a voz.", isError: true)
-            return
-        }
-        normalizeTTSSelection()
-        let voice = selectedTTSVoice
-        let model = selectedTTSModel
-        let portugueseVariant = effectivePortugueseVariant()
-        isLoadingTTS = true
-        ttsTask = Task { [weak self] in
-            guard let self else { return }
-            do {
-                let speechText = await self.speechTextForTTS(
-                    from: text,
-                    apiKey: apiKey,
-                    portugueseVariant: portugueseVariant
-                )
-                let audioData = try await self.ttsClient.synthesize(
-                    text: speechText,
-                    apiKey: apiKey,
-                    voice: voice,
-                    model: model
-                )
-                try Task.checkCancellation()
-                let player = try AVAudioPlayer(data: audioData)
-                await MainActor.run {
-                    self.audioPlayer = player
-                    self.isLoadingTTS = false
-                    self.isSpeaking = true
-                }
-                player.play()
-                while player.isPlaying {
-                    try await Task.sleep(for: .milliseconds(200))
-                }
-                await MainActor.run {
-                    self.isSpeaking = false
-                }
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.isLoadingTTS = false
-                    self.isSpeaking = false
-                }
-            } catch {
-                await MainActor.run {
-                    self.isLoadingTTS = false
-                    self.isSpeaking = false
-                    self.setStatus(error.localizedDescription, isError: true)
-                }
-            }
-        }
-    }
-
-    func previewTTSVoice(_ voice: TTSVoice) {
-        speakText(voice.previewText(for: selectedPortugueseVariant))
-    }
-
-    func stopSpeaking() {
-        ttsTask?.cancel()
-        ttsTask = nil
-        audioPlayer?.stop()
-        audioPlayer = nil
-        isLoadingTTS = false
-        isSpeaking = false
-    }
-
-    func onTTSSettingsChanged() {
-        normalizeTTSSelection()
-        UserDefaults.standard.set(selectedTTSVoice.rawValue, forKey: Self.ttsVoiceDefaultsKey)
-        UserDefaults.standard.set(selectedTTSModel.rawValue, forKey: Self.ttsModelDefaultsKey)
-        UserDefaults.standard.set(selectedPortugueseVariant.rawValue, forKey: Self.portugueseVariantDefaultsKey)
-    }
-
     func toggleRecordingFromButton() {
         Task {
             await toggleRecording(origin: .button)
@@ -437,7 +271,7 @@ final class VoicePasteViewModel: ObservableObject {
             isRecording = true
             lastTranscript = ""
             startAudioMetering()
-            soundCuePlayer.playStartCue(selectedStartCueSound)
+            soundCuePlayer.playStartCue()
             let message: String
             switch origin {
             case .hotkey:
@@ -467,13 +301,12 @@ final class VoicePasteViewModel: ObservableObject {
 
         isRecording = false
         stopAudioMetering()
-        soundCuePlayer.playStopCue(selectedStopCueSound)
+        soundCuePlayer.playStopCue()
         isTranscribing = true
         setStatus("A transcrever áudio...", isError: false)
         transcriptionTask?.cancel()
         transcriptionTask = Task { [weak self] in
             guard let self else { return }
-            let pipelineStartTime = Date()
             defer {
                 Task { @MainActor in
                     self.isTranscribing = false
@@ -487,13 +320,12 @@ final class VoicePasteViewModel: ObservableObject {
                     throw VoicePasteError.missingAPIKey
                 }
 
-                let model = await MainActor.run(body: { self.selectedTranscriptionModel.rawValue })
                 let languageHint = await MainActor.run(body: { self.transcriptionLanguageHint() })
                 let prompt = await MainActor.run(body: { self.transcriptionPrompt() })
                 let transcriptionResult = try await self.transcriptionClient.transcribeAudio(
                     fileURL: recordingURL,
                     apiKey: apiKey,
-                    model: model,
+                    model: Self.transcriptionModel,
                     languageHint: languageHint,
                     prompt: prompt,
                     timeoutSeconds: Self.transcriptionTimeoutSeconds,
@@ -509,7 +341,6 @@ final class VoicePasteViewModel: ObservableObject {
                 var outputText = cleanTranscript
                 var translationRequested = false
                 var translationFailedMessage: String?
-                var translationElapsedSeconds: TimeInterval?
                 let translationRequest = await MainActor.run(body: { self.currentTranslationRequest() })
                 if let translationRequest {
                     translationRequested = true
@@ -517,7 +348,6 @@ final class VoicePasteViewModel: ObservableObject {
                         self.setStatus("A traduzir para \(translationRequest.targetLanguage)...", isError: false)
                     }
 
-                    let translationStartTime = Date()
                     do {
                         outputText = try await self.translationClient.translate(
                             text: cleanTranscript,
@@ -528,24 +358,10 @@ final class VoicePasteViewModel: ObservableObject {
                     } catch {
                         translationFailedMessage = error.localizedDescription
                     }
-                    translationElapsedSeconds = Date().timeIntervalSince(translationStartTime)
-                }
-
-                let pipelineElapsedSeconds = Date().timeIntervalSince(pipelineStartTime)
-                let diagnosticsSummary = await MainActor.run {
-                    self.buildTranscriptionDiagnostics(
-                        transcriptionMetrics: transcriptionResult.metrics,
-                        pipelineElapsedSeconds: pipelineElapsedSeconds,
-                        translationElapsedSeconds: translationElapsedSeconds,
-                        translationRequested: translationRequested,
-                        translationFailed: translationFailedMessage != nil
-                    )
                 }
 
                 await MainActor.run {
                     self.lastTranscript = outputText
-                    self.lastTranscriptionDiagnostics = diagnosticsSummary
-                    self.pushTranscriptionDiagnosticsHistory(diagnosticsSummary)
                 }
 
                 let shouldAutoPaste = await MainActor.run(body: { self.autoPasteEnabled })
@@ -624,16 +440,10 @@ final class VoicePasteViewModel: ObservableObject {
                 }
             } catch is CancellationError {
                 await MainActor.run {
-                    self.lastTranscriptionDiagnostics = "Transcrição cancelada."
-                    self.pushTranscriptionDiagnosticsHistory("Transcrição cancelada.")
                     self.setStatus("Transcrição cancelada.", isError: false)
                 }
             } catch {
-                let pipelineElapsedSeconds = Date().timeIntervalSince(pipelineStartTime)
                 await MainActor.run {
-                    let diagnostics = "Falhou após \(self.formatDurationSeconds(pipelineElapsedSeconds)): \(error.localizedDescription)"
-                    self.lastTranscriptionDiagnostics = diagnostics
-                    self.pushTranscriptionDiagnosticsHistory(diagnostics)
                     self.setStatus(error.localizedDescription, isError: true)
                 }
             }
@@ -835,14 +645,9 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private func loadPersistedSettings() {
-        // Migração: "pt" → "pt-PT" ou "pt-BR" conforme variante guardada
+        // Migração: "pt" → "pt-PT" (variantes deixaram de ser configuradas à parte)
         migratePortugueseLanguageSetting(key: Self.translationSourceDefaultsKey)
         migratePortugueseLanguageSetting(key: Self.translationTargetDefaultsKey)
-
-        if let modelRaw = UserDefaults.standard.string(forKey: Self.transcriptionModelDefaultsKey),
-           let model = TranscriptionModel(rawValue: modelRaw) {
-            selectedTranscriptionModel = model
-        }
 
         if UserDefaults.standard.object(forKey: Self.translationEnabledDefaultsKey) != nil {
             translationEnabled = UserDefaults.standard.bool(forKey: Self.translationEnabledDefaultsKey)
@@ -857,37 +662,6 @@ final class VoicePasteViewModel: ObservableObject {
            let target = SupportedLanguage(rawValue: targetRaw) {
             selectedTargetLanguage = target
         }
-
-        if let voiceRaw = UserDefaults.standard.string(forKey: Self.ttsVoiceDefaultsKey),
-           let voice = TTSVoice(rawValue: voiceRaw) {
-            selectedTTSVoice = voice
-        }
-
-        if let modelRaw = UserDefaults.standard.string(forKey: Self.ttsModelDefaultsKey),
-           let model = TTSModel(rawValue: modelRaw) {
-            selectedTTSModel = model
-        }
-
-        if let variantRaw = UserDefaults.standard.string(forKey: Self.portugueseVariantDefaultsKey),
-           let variant = PortugueseVariant(rawValue: variantRaw) {
-            selectedPortugueseVariant = variant
-        }
-
-        if let startCueRaw = UserDefaults.standard.string(forKey: Self.startCueSoundDefaultsKey),
-           let startCue = RecordingCueSound(rawValue: startCueRaw) {
-            selectedStartCueSound = startCue
-        }
-
-        if let stopCueRaw = UserDefaults.standard.string(forKey: Self.stopCueSoundDefaultsKey),
-           let stopCue = RecordingCueSound(rawValue: stopCueRaw) {
-            selectedStopCueSound = stopCue
-        }
-
-        normalizeTTSSelection()
-    }
-
-    private func persistTranscriptionModel(_ model: String) {
-        UserDefaults.standard.set(model, forKey: Self.transcriptionModelDefaultsKey)
     }
 
     private func persistTranslationSettings() {
@@ -921,164 +695,13 @@ final class VoicePasteViewModel: ObservableObject {
 
     private func migratePortugueseLanguageSetting(key: String) {
         guard let raw = UserDefaults.standard.string(forKey: key), raw == "pt" else { return }
-        let variantRaw = UserDefaults.standard.string(forKey: Self.portugueseVariantDefaultsKey)
-        let newRaw = (variantRaw == PortugueseVariant.brazil.rawValue)
-            ? SupportedLanguage.portugueseBR.rawValue
-            : SupportedLanguage.portuguesePT.rawValue
-        UserDefaults.standard.set(newRaw, forKey: key)
+        UserDefaults.standard.set(SupportedLanguage.portuguesePT.rawValue, forKey: key)
     }
-
-    private func effectivePortugueseVariant() -> PortugueseVariant {
-        if translationEnabled, let variant = selectedTargetLanguage.portugueseVariant {
-            return variant
-        }
-        if let variant = selectedSourceLanguage.portugueseVariant {
-            return variant
-        }
-        return selectedPortugueseVariant
-    }
-
-    private func speechTextForTTS(
-        from text: String,
-        apiKey: String,
-        portugueseVariant: PortugueseVariant
-    ) async -> String {
-        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return text }
-        guard shouldNormalizePortugueseForSpeech(trimmed) else {
-            return trimmed
-        }
-
-        do {
-            return try await translationClient.translate(
-                text: trimmed,
-                sourceLanguage: "Português",
-                targetLanguage: portugueseVariant.translationDisplayName,
-                apiKey: apiKey
-            )
-        } catch {
-            return trimmed
-        }
-    }
-
-    private func shouldNormalizePortugueseForSpeech(_ text: String) -> Bool {
-        if translationEnabled && !selectedTargetLanguage.isPortuguese { return false }
-        if selectedSourceLanguage.isPortuguese { return true }
-        if translationEnabled && selectedTargetLanguage.isPortuguese { return true }
-        return Self.looksLikePortuguese(text)
-    }
-
-    private static func looksLikePortuguese(_ text: String) -> Bool {
-        let normalized = " \(text.lowercased()) "
-        let markers = [" não ", " que ", " para ", " com ", " uma ", " está ", "ção", "ções", "ões", "lh", "nh"]
-        let hitCount = markers.reduce(0) { partialResult, marker in
-            partialResult + (normalized.contains(marker) ? 1 : 0)
-        }
-        return hitCount >= 2
-    }
-
-    private func normalizeTTSSelection() {
-        let supportedVoices = selectedTTSModel.supportedVoices
-        guard !supportedVoices.isEmpty else { return }
-        if !supportedVoices.contains(selectedTTSVoice), let fallbackVoice = supportedVoices.first {
-            selectedTTSVoice = fallbackVoice
-        }
-    }
-
-    private func buildTranscriptionDiagnostics(
-        transcriptionMetrics: OpenAITranscriptionMetrics,
-        pipelineElapsedSeconds: TimeInterval,
-        translationElapsedSeconds: TimeInterval?,
-        translationRequested: Bool,
-        translationFailed: Bool
-    ) -> String {
-        var parts: [String] = [
-            "transcrição \(formatDurationSeconds(transcriptionMetrics.totalElapsedSeconds))",
-            "total \(formatDurationSeconds(pipelineElapsedSeconds))",
-            "tamanho \(Self.byteCountFormatter.string(fromByteCount: Int64(transcriptionMetrics.audioBytes)))",
-            "modelo \(transcriptionMetrics.model)",
-            "tentativas \(transcriptionMetrics.attempts.count)",
-        ]
-
-        if let audioDurationSeconds = transcriptionMetrics.audioDurationSeconds {
-            parts.append("áudio \(formatDurationSeconds(audioDurationSeconds))")
-        }
-
-        if let languageHint = transcriptionMetrics.languageHint, !languageHint.isEmpty {
-            parts.append("língua \(languageHint)")
-        }
-
-        if let prompt = transcriptionMetrics.prompt, !prompt.isEmpty {
-            let label = prompt.contains("Portugal") ? "pt-PT" : prompt.contains("Brasil") ? "pt-BR" : "prompt"
-            parts.append("variante \(label)")
-        }
-
-        if transcriptionMetrics.attempts.count > 1 {
-            let retryReasons = transcriptionMetrics.attempts
-                .dropLast()
-                .compactMap(\.failureReason)
-            if !retryReasons.isEmpty {
-                parts.append("retry \(retryReasons.joined(separator: ","))")
-            }
-        }
-
-        if let finalAttempt = transcriptionMetrics.attempts.last,
-           let openAIProcessingMilliseconds = finalAttempt.openAIProcessingMilliseconds {
-            parts.append("OpenAI \(openAIProcessingMilliseconds)ms")
-        }
-
-        if translationRequested {
-            if let translationElapsedSeconds {
-                let prefix = translationFailed ? "tradução falhou em" : "tradução"
-                parts.append("\(prefix) \(formatDurationSeconds(translationElapsedSeconds))")
-            } else {
-                parts.append(translationFailed ? "tradução falhou" : "tradução ativa")
-            }
-        }
-
-        return parts.joined(separator: " | ")
-    }
-
-    private func formatDurationSeconds(_ seconds: TimeInterval) -> String {
-        guard seconds.isFinite else {
-            return "n/a"
-        }
-
-        if seconds >= 10 {
-            return String(format: "%.0fs", seconds)
-        }
-
-        return String(format: "%.1fs", seconds)
-    }
-
-    private static let byteCountFormatter: ByteCountFormatter = {
-        let formatter = ByteCountFormatter()
-        formatter.allowedUnits = [.useKB, .useMB]
-        formatter.countStyle = .file
-        formatter.isAdaptive = true
-        return formatter
-    }()
-
-    private func pushTranscriptionDiagnosticsHistory(_ diagnostics: String) {
-        let timestamp = Self.diagnosticsTimestampFormatter.string(from: Date())
-        transcriptionDiagnosticsHistory.insert("[\(timestamp)] \(diagnostics)", at: 0)
-        if transcriptionDiagnosticsHistory.count > 8 {
-            transcriptionDiagnosticsHistory.removeLast(transcriptionDiagnosticsHistory.count - 8)
-        }
-    }
-
-    private static let diagnosticsTimestampFormatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.locale = Locale(identifier: "pt_PT")
-        formatter.dateFormat = "HH:mm:ss"
-        return formatter
-    }()
 
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         isStatusError = isError
     }
-
 
     private struct TranslationRequest {
         let sourceLanguage: String
@@ -1088,38 +711,6 @@ final class VoicePasteViewModel: ObservableObject {
     private enum TriggerOrigin {
         case button
         case hotkey
-    }
-}
-
-enum PortugueseVariant: String, CaseIterable, Identifiable {
-    case portugal = "pt-PT"
-    case brazil = "pt-BR"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .portugal: return "Português (Portugal)"
-        case .brazil: return "Português (Brasil)"
-        }
-    }
-
-    var translationDisplayName: String {
-        switch self {
-        case .portugal: return "Português de Portugal"
-        case .brazil: return "Português do Brasil"
-        }
-    }
-
-    var transcriptionLanguageHint: String {
-        "pt"
-    }
-
-    var supportedLanguage: SupportedLanguage {
-        switch self {
-        case .portugal: return .portuguesePT
-        case .brazil: return .portugueseBR
-        }
     }
 }
 
@@ -1165,44 +756,8 @@ enum SupportedLanguage: String, CaseIterable, Identifiable {
         }
     }
 
-    var isPortuguese: Bool {
-        self == .portuguesePT || self == .portugueseBR
-    }
-
-    var portugueseVariant: PortugueseVariant? {
-        switch self {
-        case .portuguesePT: return .portugal
-        case .portugueseBR: return .brazil
-        default: return nil
-        }
-    }
-
     static var targetLanguages: [SupportedLanguage] {
         allCases.filter { $0 != .auto }
-    }
-}
-
-enum TranscriptionModel: String, CaseIterable, Identifiable {
-    case gpt4oTranscribe = "gpt-4o-transcribe"
-    case gpt4oMiniTranscribe = "gpt-4o-mini-transcribe"
-    case whisper1 = "whisper-1"
-
-    var id: String { rawValue }
-
-    var displayName: String {
-        switch self {
-        case .gpt4oTranscribe: return "GPT-4o Transcribe"
-        case .gpt4oMiniTranscribe: return "GPT-4o Mini Transcribe"
-        case .whisper1: return "Whisper-1 (legacy)"
-        }
-    }
-
-    var subtitle: String {
-        switch self {
-        case .gpt4oTranscribe: return "Melhor qualidade"
-        case .gpt4oMiniTranscribe: return "Mais rápido, mais económico"
-        case .whisper1: return "Modelo clássico"
-        }
     }
 }
 

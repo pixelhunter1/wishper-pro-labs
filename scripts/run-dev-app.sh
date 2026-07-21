@@ -11,20 +11,20 @@ ENTITLEMENTS_PATH="$ROOT_DIR/Resources/WishperPro.entitlements"
 
 detect_signing_identity() {
   if [[ -n "${WISHPER_SIGN_IDENTITY:-}" ]]; then
-    echo "$WISHPER_SIGN_IDENTITY"
+    printf '%s\n' "$WISHPER_SIGN_IDENTITY"
     return
   fi
 
   local identity
   identity=$(
     security find-identity -v -p codesigning 2>/dev/null \
-      | awk -F\" '/Apple Development:/{print $2; exit}'
+      | awk -F\" '/Apple Development:/{print $2; exit}' || true
   )
 
   if [[ -n "$identity" ]]; then
-    echo "$identity"
+    printf '%s\n' "$identity"
   else
-    echo "-"
+    printf '%s\n' "-"
   fi
 }
 
