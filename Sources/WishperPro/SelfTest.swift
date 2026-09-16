@@ -83,6 +83,25 @@ enum SelfTest {
         }
         await checkLiveTranscriber(audioURL: audioURL, apiKey: apiKey)
         await checkDictationSession(audioURL: audioURL, apiKey: apiKey)
+        await checkInvalidKey(audioURL: audioURL)
+    }
+
+    /// A rejected key must surface as "A API key é inválida." without trying the fallback.
+    private static func checkInvalidKey(audioURL: URL) async {
+        let session = DictationSession(options: .init(apiKey: "sk-invalid-selftest", languages: ["pt"], prompt: nil))
+        let toneFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        do {
+            let microphone = try session.startWithoutMicrophone(inputFormat: toneFormat)
+            for chunk in 0..<10 {
+                microphone.ingest(sineBuffer(format: toneFormat, frames: 4_800, startFrame: chunk * 4_800))
+            }
+            _ = try await session.finish()
+            check(false, "key inválida: devia falhar")
+        } catch RealtimeTranscriptionError.unauthorized {
+            check(!session.usedFallback, "key inválida: \"A API key é inválida.\" sem plano B")
+        } catch {
+            check(false, "key inválida: deu outro erro (\(error.localizedDescription))")
+        }
     }
 
     private static func checkDictationSession(audioURL: URL, apiKey: String) async {
