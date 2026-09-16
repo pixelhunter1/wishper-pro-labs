@@ -67,6 +67,11 @@ PLIST
 
 main() {
   cd "$ROOT_DIR"
+  local selftest=false
+  if [[ "${1:-}" == "--selftest" ]]; then
+    selftest=true
+  fi
+
   echo "[1/5] Building debug binary..."
   swift build
 
@@ -89,6 +94,14 @@ main() {
     --entitlements "$ENTITLEMENTS_PATH" \
     "$APP_PATH"
   xattr -dr com.apple.quarantine "$APP_PATH" || true
+
+  if [[ "$selftest" == true ]]; then
+    local audio_path="${TMPDIR:-/tmp}/wishper-selftest.aiff"
+    echo "[5/5] Running self-test..."
+    say -v Joana -o "$audio_path" "Olá, isto é um teste do Wishper Pro. O ditado ao vivo está a funcionar."
+    "$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME" --selftest "$audio_path"
+    return
+  fi
 
   echo "[5/5] Opening dev app..."
   pkill -f 'WishperPro' || true

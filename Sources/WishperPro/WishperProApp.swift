@@ -1,6 +1,5 @@
 import SwiftUI
 
-@main
 struct WishperProApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     @StateObject private var viewModel: VoicePasteViewModel
