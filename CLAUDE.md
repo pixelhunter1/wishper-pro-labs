@@ -8,6 +8,12 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 # Compilar (debug)
 swift build
 
+# Verificações offline (sem rede nem bundle)
+.build/debug/WishperPro --selftest
+
+# Bundle dev em /tmp + verificações online (ao vivo + plano B) com a API key do Keychain
+./scripts/run-dev-app.sh --selftest
+
 # Compilar e correr em modo dev (cria app bundle em /tmp)
 ./scripts/run-dev-app.sh
 
@@ -15,55 +21,51 @@ swift build
 ./scripts/install-local-release.sh
 ```
 
-Não existem testes unitários no projeto. Verificar alterações compilando com `swift build` e testando manualmente via `./scripts/run-dev-app.sh`.
+Não há target de testes: as verificações vivem em `SelfTest.swift` (`--selftest`). Ao mudar lógica (atalho, áudio, protocolo, clipboard), acrescentar lá uma verificação. A interface verifica-se à mão com `./scripts/run-dev-app.sh`. Se as verificações online disserem que não há key, abrir a app dev, guardar a key nas Definições e repetir.
 
 ## Architecture
 
-Aplicação macOS nativa em Swift 6.2 / SwiftUI, compilada com Swift Package Manager (sem dependências externas). Target: macOS 13+.
+App macOS de barra de menus em Swift 6.2 / SwiftUI, compilada com Swift Package Manager (sem dependências externas). Target: macOS 13+ (APIs do macOS 14/26 atrás de `#available`).
 
-### MVVM com ViewModel central
+- `SelfTest.swift` — ponto de entrada (`@main`): `--selftest` corre as verificações; senão arranca `WishperProApp`.
+- `WishperProApp.swift` — `MenuBarExtra` (menu nativo) + `Settings`; `AppDelegate` (política de ativação, bolha, primeiro arranque); `SettingsOpener`.
+- `SettingsView.swift` — Definições (⌘,): Geral, Ditado, Bolha, Tradução (`Form` `.grouped`).
+- `VoicePasteViewModel.swift` — fonte de verdade: `DictationPhase`, definições (`DefaultsKey`), atalho, entrega do texto.
+- `DictationSession.swift` — um ditado: microfone → `gpt-live-transcribe` → texto final; plano B `gpt-transcribe` com o áudio em memória.
+- `VoiceBubbleView.swift` + `Services/FloatingBubbleController.swift` — bolha (Texto ao vivo / Compacta / Oculta; 3 posições; Liquid Glass no macOS 26).
+- `BrandMark.swift` — símbolo da marca (`BrandMark.svg`, copiado de `logo.svg` pelos scripts) como imagem template.
 
-`VoicePasteViewModel` é o single source of truth — orquestra todo o pipeline de voz, gere estado publicado (@Published) e persiste configurações. Todos os serviços são invocados a partir deste ViewModel.
-
-Pipeline: gravar áudio → transcrever (OpenAI) → traduzir (opcional) → auto-paste → TTS (opcional).
+Pipeline: atalho → `DictationSession.start()` (microfone + WebSocket em paralelo) → texto ao vivo na bolha → `finish()` (commit) → tradução opcional → colar (repõe o clipboard) → "Colado · App".
 
 ### Services (Sources/WishperPro/Services/)
 
-Cada serviço é stateless e focado numa responsabilidade:
-
-- `AudioRecorder` — AVAudioRecorder wrapper (AAC 16kHz mono), metering para nível áudio
-- `GlobalHotkeyMonitor` — Carbon EventManager para hotkeys globais + fallback NSEvent
-- `OpenAITranscriptionClient` — POST /v1/audio/transcriptions, multipart upload, métricas e retries
-- `OpenAITranslationClient` — POST /v1/chat/completions (gpt-4o-mini) para tradução
-- `OpenAITTSClient` — POST /v1/audio/speech (13 vozes, 4 modelos)
-- `AutoPaster` — Accessibility API (AXUIElement) para verificar campo editável e simular Cmd+V
-- `FloatingBubbleController` — NSPanel flutuante com estado visual
-- `KeychainService` — CRUD da API key no Keychain (service: com.wishperpro.desktop)
-- `SoundCuePlayer` — sons de sistema para feedback de gravação
-
-### UI (Sources/WishperPro/)
-
-- `WishperProApp.swift` — Entry point, AppDelegate, menu bar
-- `ContentView.swift` — Layout principal com 2 tabs (Home/Opções), componentes inline (HomePage, OptionsPage, DarkCard)
-- `VoiceBubbleView.swift` — Vista do indicador flutuante
+- `MicrophoneStream` — `AVAudioEngine` → PCM16 24 kHz mono em pedaços de 100 ms (`PCM16`, `PCMConverter`, `WAV`)
+- `OpenAIRealtimeTranscriber` — actor; `wss://api.openai.com/v1/realtime?intent=transcription`, `turn_detection: null`, commit manual
+- `OpenAITranscriptionClient` — plano B: POST /v1/audio/transcriptions com `gpt-transcribe` e `languages[]`
+- `OpenAITranslationClient` — POST /v1/chat/completions (gpt-4o-mini)
+- `GlobalHotkeyMonitor` — Carbon (premir/largar) + NSEvent (só-modificador); Esc registado só durante o ditado; `HotkeyDecider`
+- `AutoPaster` — Accessibility + Cmd+V; guarda e repõe o clipboard
+- `KeychainService` — API key no Keychain (service: com.wishperpro.desktop)
+- `SoundCuePlayer` — sons de início/fim
+- `Permissions` — pedido de acesso ao microfone
 
 ### Persistência
 
 - **Keychain**: API key OpenAI (único segredo)
-- **UserDefaults**: todas as preferências (hotkey, modelo, tradução, voz TTS, sons)
-- **FileManager**: ficheiros áudio temporários em /var/tmp/ (removidos após transcrição)
-- Sem base de dados, sem backend
+- **UserDefaults** (`DefaultsKey`, prefixo `wishper.`): atalho e comportamento, tradução e línguas, colar, repor clipboard, estilo e posição da bolha, ícone na Dock
+- Áudio só em memória; sem base de dados, sem backend
 
 ### Concorrência
 
-- `@MainActor` no ViewModel e FloatingBubbleController
-- Swift structured concurrency (async/await, Task) para chamadas API
-- Audio metering via Task.sleep polling a cada 120ms
+- `@MainActor`: ViewModel, `DictationSession`, `GlobalHotkeyMonitor`, `FloatingBubbleController`
+- `OpenAIRealtimeTranscriber` é um actor; áudio e deltas passam por `AsyncStream` para manter a ordem
+- `MicrophoneStream` é `@unchecked Sendable` com `NSLock` (o tap corre numa thread de áudio)
 
 ## Key Conventions
 
-- UI e mensagens de erro em Português (pt-PT)
-- Erros dos serviços usam enums `LocalizedError` com mensagens descritivas em português
-- Hotkey debounce de 600ms para evitar triggers duplos
-- Ficheiros áudio temporários com prefixo `wishper-` e UUID
-- Sem .env — configuração toda via Keychain + UserDefaults
+- UI e erros em Português (pt-PT); interface nativa (HIG), segue claro/escuro do sistema
+- Marca monocromática; cores do sistema só com significado (vermelho erro, verde sucesso)
+- Erros dos serviços como enums `LocalizedError`
+- Modelos: `gpt-live-transcribe` (ao vivo), `gpt-transcribe` (plano B), `gpt-4o-mini` (tradução)
+- Sem .env — configuração via Keychain + UserDefaults
+- Trabalho em paralelo com outras sessões: usar worktrees (`.claude/worktrees/`, ignorado em `.git/info/exclude`)

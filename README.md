@@ -1,212 +1,126 @@
 # Wishper Pro (macOS)
 
-Aplicação nativa em Swift para ditado com OpenAI, focada em baixa latência no fluxo `falar -> transcrever -> colar`.
+Ditado com IA para macOS: carregas no atalho, falas, vês o texto a aparecer e ele é colado na app onde estás.
 
-## Visão geral
+## Destaques
 
-Wishper Pro transforma voz em texto no macOS com um atalho global configurável. O foco da app é produtividade:
+- **Texto ao vivo** enquanto falas (`gpt-live-transcribe`), pronto quase no instante em que paras.
+- **Plano B automático:** se a ligação ao vivo falhar, o áudio (em memória) segue para `gpt-transcribe`.
+- **Bolha flutuante** discreta: Texto ao vivo, Compacta ou Oculta; em baixo ao centro, em cima ao centro ou no canto; Liquid Glass no macOS 26.
+- **Atalho moderno:** mantém premido para falar ou toca para mãos-livres (também Manter premido ou Alternar). Esc cancela.
+- **Clipboard intacto:** o que tinhas copiado volta depois de colar.
+- **Tradução** opcional depois de transcrever.
+- **App de barra de menus** com Definições nativas (⌘,), claro/escuro do sistema e acessibilidade (VoiceOver, Reduzir movimento, Reduzir transparência, Aumentar contraste).
+- API key só no Keychain; sem backend, sem base de dados.
 
-- iniciar/parar gravação rapidamente com push-to-talk;
-- transcrever com modelos OpenAI configuráveis;
-- traduzir opcionalmente o resultado;
-- colar automaticamente no campo ativo da app onde estavas a escrever;
-- ouvir a transcrição com TTS sem sair da interface.
-
-Não requer login próprio, não usa base de dados local de transcrições e guarda a API key apenas no Keychain do macOS.
-
-## Como a app funciona
-
-### Fluxo funcional (alto nível)
-
-1. O utilizador guarda a API key OpenAI em `Opções`.
-2. A app pede permissão de microfone (quando necessário).
-3. O utilizador inicia gravação com hotkey global ou botão.
-4. O áudio é capturado em `m4a` temporário.
-5. O ficheiro é enviado para `POST /v1/audio/transcriptions`.
-6. Opcionalmente, o texto é traduzido com `POST /v1/chat/completions`.
-7. Se `Auto-paste` estiver ativo e houver permissão de Acessibilidade, a app simula `Cmd+V` no campo ativo.
-8. O resultado fica visível na Home, com diagnóstico técnico e opção de reproduzir áudio via `POST /v1/audio/speech`.
-
-### Fluxo técnico (sequência)
+## Como funciona
 
 ```mermaid
 sequenceDiagram
     participant U as Utilizador
     participant A as Wishper Pro
-    participant O as OpenAI API
-    participant M as macOS App Ativa
+    participant O as OpenAI
+    participant M as App ativa
 
-    U->>A: Inicia gravação (hotkey/botão)
-    A->>A: Captura áudio (AVAudioRecorder)
-    U->>A: Para gravação
-    A->>O: /v1/audio/transcriptions
-    O-->>A: Texto transcrito
-    alt Tradução ativa
+    U->>A: Atalho (manter ou tocar)
+    A->>O: WebSocket gpt-live-transcribe (áudio PCM 24 kHz)
+    O-->>A: Texto parcial (bolha)
+    U->>A: Larga ou toca de novo
+    A->>O: commit
+    O-->>A: Texto final
+    alt Ligação falhou
+        A->>O: /v1/audio/transcriptions (gpt-transcribe, WAV)
+        O-->>A: Texto final
+    end
+    opt Tradução ativa
         A->>O: /v1/chat/completions
         O-->>A: Texto traduzido
     end
-    alt Auto-paste ativo + permissão
-        A->>M: Simula Cmd+V
-    end
-    opt Ouvir resultado
-        A->>O: /v1/audio/speech
-        O-->>A: MP3
-        A->>U: Reprodução local
-    end
+    A->>M: Cmd+V e repõe o clipboard
 ```
-
-## Funcionalidades principais
-
-- Push-to-talk global configurável (default: `Option + Space`).
-- Home com controlo rápido de gravação, estado e transcrição.
-- Diagnóstico técnico por transcrição (duração, tamanho, tentativas, tempo OpenAI quando disponível).
-- Tradução automática opcional (origem/destino configuráveis).
-- Reprodução TTS do texto final com escolha de modelo/voz/variante de português.
-- Bubble flutuante no desktop durante gravação/transcrição/reprodução.
-- Armazenamento seguro da API key no Keychain.
-- Persistência de preferências em `UserDefaults`.
-
-## Arquitetura
-
-| Componente | Responsabilidade |
-| --- | --- |
-| `VoicePasteViewModel` | Orquestra todo o pipeline de voz, estado de UI e configurações. |
-| `AudioRecorder` | Gravação local (AAC 16 kHz mono) e medição de nível de áudio. |
-| `GlobalHotkeyMonitor` | Registo e captura de hotkeys globais (Carbon + fallback). |
-| `OpenAITranscriptionClient` | Integração com `/v1/audio/transcriptions` e métricas de tentativas. |
-| `OpenAITranslationClient` | Integração com `/v1/chat/completions` para tradução. |
-| `OpenAITTSClient` | Integração com `/v1/audio/speech` para voz sintetizada. |
-| `AutoPaster` | Cola texto no campo ativo via `NSPasteboard` + evento `Cmd+V`. |
-| `FloatingBubbleController` | Mostra indicador flutuante durante estados ativos. |
-| `KeychainService` | Guardar/carregar/remover API key no Keychain do macOS. |
 
 ## Requisitos
 
-- macOS 13+
-- Xcode Command Line Tools (Swift 6+)
+- macOS 13+ (Liquid Glass no macOS 26)
+- Xcode Command Line Tools (Swift 6.2)
 - API key da OpenAI
 
 ## Instalação
 
-### Release local
-
 ```bash
+# Release em ~/Applications/Wishper Pro.app
 ./scripts/install-local-release.sh
-```
 
-O script:
-
-1. compila em `release`;
-2. cria bundle em `~/Applications/Wishper Pro.app`;
-3. assina com certificado `Apple Development` (quando disponível);
-4. abre/reinicia a app.
-
-### Ambiente de desenvolvimento
-
-```bash
+# Dev em /tmp/Wishper Pro Dev.app
 ./scripts/run-dev-app.sh
-```
 
-Este modo cria `Wishper Pro Dev.app` em `/tmp`, com `Info.plist` e assinatura, evitando limitações de interação comuns com `swift run` sem bundle app.
+# Verificações (offline + ao vivo + plano B)
+./scripts/run-dev-app.sh --selftest
+```
 
 ## Primeira configuração
 
-1. Abrir `Opções`.
-2. Inserir API key (`sk-...`) e clicar `Guardar Key`.
-3. Conceder permissão de microfone quando solicitada.
-4. Em `Acessibilidade`, clicar `Ativar Accessibilidade` e aprovar em:
-   `Definições do Sistema > Privacidade e Segurança > Acessibilidade`.
+Na primeira vez abrem-se as Definições (ícone na barra de menus > Definições…):
 
-## Como usar
+1. **Geral:** colar a API key (`sk-…`) e Guardar.
+2. **Permissões:** permitir o Microfone e a Acessibilidade (esta é necessária para colar).
+3. Opcional: "Abrir ao iniciar sessão" e "Mostrar ícone na Dock".
 
-1. Colocar cursor num campo de texto em qualquer app.
-2. Iniciar gravação com a hotkey configurada ou botão `Iniciar Ditado`.
-3. Falar.
-4. Parar gravação com a mesma hotkey ou botão.
-5. Aguardar transcrição (e tradução, se ativa).
-6. O texto será colado automaticamente se `Auto-paste` estiver ativo.
+## Utilização
 
-## Atalhos
+1. Coloca o cursor num campo de texto em qualquer app.
+2. Mantém premido o atalho (predefinição `Option + Space`) e fala; larga para terminar. Em alternativa, toca uma vez para começar e outra para terminar.
+3. O texto aparece na bolha enquanto falas e é colado quando paras.
+4. `Esc` durante o ditado cancela sem colar.
 
-| Atalho | Ação |
-| --- | --- |
-| `Option + Space` (default) | Iniciar/parar gravação globalmente. |
-| `Command + 1` | Ir para tab `Início`. |
-| `Command + ,` | Ir para tab `Opções`. |
-| `Command + Return` | Alternar gravação pelo botão principal. |
-| `Esc` | Cancelar transcrição em curso. |
+## Definições
 
-> O atalho push-to-talk pode ser alterado nas `Opções`.
+| Separador | Opções |
+|---|---|
+| Geral | API key, permissões, abrir ao iniciar sessão, ícone na Dock |
+| Ditado | atalho, comportamento (Automático / Manter premido / Alternar), língua, colar automaticamente, repor clipboard |
+| Bolha | estilo (Texto ao vivo / Compacta / Oculta), posição, pré-visualização |
+| Tradução | ativar, língua de destino |
 
-## Configuração e persistência
+## Custos (referência)
 
-### Segredos e credenciais
+- `gpt-live-transcribe`: $0,017/min
+- `gpt-transcribe` (só no plano B): $0,0045/min
 
-- API key é guardada no Keychain:
-  - service: `com.wishperpro.desktop`
-  - account: `openai-api-key`
+## Privacidade
 
-### Preferências persistidas
+- Sem backend próprio; o áudio fica só em memória durante o ditado.
+- A API key fica no Keychain (`com.wishperpro.desktop` / `openai-api-key`).
+- O texto colado é marcado como temporário para os gestores de clipboard não o guardarem.
 
-A app guarda localmente (UserDefaults):
+## Resolução de problemas
 
-- hotkey personalizada;
-- modelo de transcrição;
-- flags e línguas de tradução;
-- voz/modelo/variante de TTS.
+- **"Permissão de microfone negada":** Definições do Sistema > Privacidade e Segurança > Microfone.
+- **Fica "Copiado" em vez de colar:** falta a permissão de Acessibilidade.
+- **"Não ouvi nada.":** o nível do microfone ficou sempre baixo; confirma o microfone de entrada.
+- **"A API key é inválida.":** guarda de novo a key em Definições > Geral.
+- **"Não foi possível ativar o atalho…":** conflito com outro atalho; escolhe outro em Definições > Ditado.
 
-### Defaults relevantes
-
-- `Auto-paste`: ativo.
-- Modelo de transcrição: `gpt-4o-mini-transcribe`.
-- Tradução: desativada.
-- Timeout de transcrição no pipeline: `30s`, sem retries automáticos (`maxRetries = 0`).
-
-## Privacidade e segurança
-
-- Não existe backend próprio neste projeto.
-- O áudio é gravado temporariamente e removido após processamento.
-- A API key não é escrita em ficheiros do repositório.
-- O texto não é persistido em base de dados local.
-
-## Troubleshooting
-
-### "Permissão de microfone negada"
-
-Ativar em `Definições do Sistema > Privacidade e Segurança > Microfone`.
-
-### "Falta permissão de Acessibilidade para colar"
-
-Ativar a app em `Definições do Sistema > Privacidade e Segurança > Acessibilidade`.
-
-### "Não foi possível ativar o atalho..."
-
-Hotkey em conflito com outra app ou atalho de sistema. Define outra combinação em `Opções`.
-
-### "API key não encontrada"
-
-Guardar novamente a key nas `Opções`. Se necessário, remover entrada antiga no Keychain e voltar a guardar.
-
-## Estrutura do projeto
+## Estrutura
 
 ```text
 Sources/WishperPro/
-  ContentView.swift
-  WishperProApp.swift
+  SelfTest.swift              # @main + --selftest
+  WishperProApp.swift         # barra de menus + Definições
+  SettingsView.swift
   VoicePasteViewModel.swift
+  DictationSession.swift
   VoiceBubbleView.swift
+  BrandMark.swift
   Services/
-    AudioRecorder.swift
-    AutoPaster.swift
-    FloatingBubbleController.swift
-    GlobalHotkeyMonitor.swift
-    KeychainService.swift
+    MicrophoneStream.swift
+    OpenAIRealtimeTranscriber.swift
     OpenAITranscriptionClient.swift
     OpenAITranslationClient.swift
-    OpenAITTSClient.swift
-    Permissions.swift
+    GlobalHotkeyMonitor.swift
+    AutoPaster.swift
+    FloatingBubbleController.swift
+    KeychainService.swift
     SoundCuePlayer.swift
-scripts/
-  install-local-release.sh
-  run-dev-app.sh
+    Permissions.swift
 ```
