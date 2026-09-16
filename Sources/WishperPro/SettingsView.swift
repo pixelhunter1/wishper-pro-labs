@@ -151,7 +151,7 @@ private struct DictationSettingsTab: View {
 
     var body: some View {
         Form {
-            Section("Atalho") {
+            Section {
                 LabeledContent("Combinação") {
                     HStack(spacing: 8) {
                         Text(viewModel.isCapturingHotkey ? "Prime a nova combinação…" : viewModel.hotkeyLabel)
@@ -163,6 +163,15 @@ private struct DictationSettingsTab: View {
                         }
                     }
                 }
+                Picker("Comportamento", selection: $viewModel.hotkeyBehavior) {
+                    ForEach(HotkeyBehavior.allCases) { behavior in
+                        Text(behavior.displayName).tag(behavior)
+                    }
+                }
+            } header: {
+                Text("Atalho")
+            } footer: {
+                Text("\(viewModel.hotkeyBehavior.explanation) Esc cancela o ditado.")
             }
 
             Section {

@@ -110,47 +110,116 @@ enum HotkeyRegistrationResult {
     case failed(message: String)
 }
 
+@MainActor
 final class GlobalHotkeyMonitor {
     private static let signature: OSType = 0x57535052 // "WSPR"
+    private static let shortcutHotKeyID: UInt32 = 1
+    private static let escapeHotKeyID: UInt32 = 2
+
+    /// Called when Esc is pressed while `setEscapeEnabled(true)` is active.
+    var onEscape: (@MainActor () -> Void)?
 
     private var eventHandler: EventHandlerRef?
-    private var hotKeyRef: EventHotKeyRef?
-    private var fallbackGlobalMonitor: Any?
-    private var fallbackLocalMonitor: Any?
-    private var activeHotKeyID: UInt32?
+    private var shortcutHotKeyRef: EventHotKeyRef?
+    private var escapeHotKeyRef: EventHotKeyRef?
+    private var globalModifierMonitor: Any?
+    private var localModifierMonitor: Any?
     private var activeShortcut: HotkeyShortcut?
-    private var onTrigger: (() -> Void)?
-    private var lastTriggerTime: Date = .distantPast
-    private var modifierKeyState: [UInt32: Bool] = [:]
-    private let debounceWindow: TimeInterval = 0.6
+    private var isModifierDown = false
+    private var onPress: (@MainActor () -> Void)?
+    private var onRelease: (@MainActor () -> Void)?
+
+    // ponytail: no deinit cleanup — the monitor lives as long as the app.
 
     func start(
         shortcut: HotkeyShortcut,
-        onTrigger: @escaping () -> Void
+        onPress: @escaping @MainActor () -> Void,
+        onRelease: @escaping @MainActor () -> Void
     ) -> HotkeyRegistrationResult {
         stop()
-        self.onTrigger = onTrigger
-        self.activeShortcut = shortcut
+        guard installEventHandlerIfNeeded() else {
+            return .failed(message: "Não foi possível instalar o atalho global.")
+        }
+        self.onPress = onPress
+        self.onRelease = onRelease
+        activeShortcut = shortcut
 
         if shortcut.isModifierOnly {
-            installModifierOnlyMonitors()
+            installModifierMonitors()
             return .registered(shortcutLabel: shortcut.label)
         }
 
-        var eventType = EventTypeSpec(
-            eventClass: OSType(kEventClassKeyboard),
-            eventKind: UInt32(kEventHotKeyPressed)
+        var hotKeyRef: EventHotKeyRef?
+        let status = RegisterEventHotKey(
+            shortcut.keyCode,
+            shortcut.modifiers,
+            EventHotKeyID(signature: Self.signature, id: Self.shortcutHotKeyID),
+            GetEventDispatcherTarget(),
+            0,
+            &hotKeyRef
         )
+        guard status == noErr else {
+            stop()
+            return .failed(
+                message: "Não foi possível ativar o atalho \(shortcut.label). Pode estar em conflito no macOS."
+            )
+        }
+        shortcutHotKeyRef = hotKeyRef
+        return .registered(shortcutLabel: shortcut.label)
+    }
 
+    /// Esc cancels a dictation. It is registered only while listening, so other apps keep their Esc.
+    func setEscapeEnabled(_ enabled: Bool) {
+        if enabled {
+            guard escapeHotKeyRef == nil, installEventHandlerIfNeeded() else { return }
+            var hotKeyRef: EventHotKeyRef?
+            let status = RegisterEventHotKey(
+                UInt32(kVK_Escape),
+                0,
+                EventHotKeyID(signature: Self.signature, id: Self.escapeHotKeyID),
+                GetEventDispatcherTarget(),
+                0,
+                &hotKeyRef
+            )
+            if status == noErr {
+                escapeHotKeyRef = hotKeyRef
+            }
+        } else if let escapeHotKeyRef {
+            UnregisterEventHotKey(escapeHotKeyRef)
+            self.escapeHotKeyRef = nil
+        }
+    }
+
+    func stop() {
+        if let shortcutHotKeyRef {
+            UnregisterEventHotKey(shortcutHotKeyRef)
+            self.shortcutHotKeyRef = nil
+        }
+        if let globalModifierMonitor {
+            NSEvent.removeMonitor(globalModifierMonitor)
+            self.globalModifierMonitor = nil
+        }
+        if let localModifierMonitor {
+            NSEvent.removeMonitor(localModifierMonitor)
+            self.localModifierMonitor = nil
+        }
+        activeShortcut = nil
+        onPress = nil
+        onRelease = nil
+        isModifierDown = false
+    }
+
+    private func installEventHandlerIfNeeded() -> Bool {
+        guard eventHandler == nil else { return true }
+        var eventTypes = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
         let userData = UnsafeMutableRawPointer(Unmanaged.passUnretained(self).toOpaque())
-        let installStatus = InstallEventHandler(
+        let status = InstallEventHandler(
             GetEventDispatcherTarget(),
             { _, eventRef, userData in
-                guard let eventRef, let userData else {
-                    return noErr
-                }
-
-                let monitor = Unmanaged<GlobalHotkeyMonitor>.fromOpaque(userData).takeUnretainedValue()
+                guard let eventRef, let userData else { return noErr }
                 var hotKeyID = EventHotKeyID()
                 let status = GetEventParameter(
                     eventRef,
@@ -161,146 +230,67 @@ final class GlobalHotkeyMonitor {
                     nil,
                     &hotKeyID
                 )
-
-                guard status == noErr else {
-                    return noErr
+                guard status == noErr else { return noErr }
+                let isPress = GetEventKind(eventRef) == UInt32(kEventHotKeyPressed)
+                let signature = hotKeyID.signature
+                let id = hotKeyID.id
+                let address = UInt(bitPattern: userData)
+                // Carbon delivers hot key events on the main thread.
+                MainActor.assumeIsolated {
+                    guard let pointer = UnsafeRawPointer(bitPattern: address) else { return }
+                    Unmanaged<GlobalHotkeyMonitor>.fromOpaque(pointer).takeUnretainedValue()
+                        .handleHotKey(signature: signature, id: id, isPress: isPress)
                 }
-
-                monitor.handleCarbonHotKeyEvent(hotKeyID)
                 return noErr
             },
-            1,
-            &eventType,
+            2,
+            &eventTypes,
             userData,
             &eventHandler
         )
-
-        guard installStatus == noErr else {
-            stop()
-            return .failed(message: "Não foi possível instalar o atalho global.")
-        }
-
-        var hotKeyRef: EventHotKeyRef?
-        let id: UInt32 = 1
-        let hotKeyID = EventHotKeyID(signature: Self.signature, id: id)
-        let registerStatus = RegisterEventHotKey(
-            shortcut.keyCode,
-            shortcut.modifiers,
-            hotKeyID,
-            GetEventDispatcherTarget(),
-            0,
-            &hotKeyRef
-        )
-
-        guard registerStatus == noErr else {
-            stop()
-            return .failed(
-                message: "Não foi possível ativar o atalho \(shortcut.label). Pode estar em conflito no macOS."
-            )
-        }
-
-        self.hotKeyRef = hotKeyRef
-        self.activeHotKeyID = id
-        return .registered(shortcutLabel: shortcut.label)
+        return status == noErr
     }
 
-    func stop() {
-        if let hotKeyRef {
-            UnregisterEventHotKey(hotKeyRef)
-            self.hotKeyRef = nil
+    private func handleHotKey(signature: OSType, id: UInt32, isPress: Bool) {
+        guard signature == Self.signature else { return }
+        switch id {
+        case Self.shortcutHotKeyID where shortcutHotKeyRef != nil:
+            if isPress { onPress?() } else { onRelease?() }
+        case Self.escapeHotKeyID where isPress && escapeHotKeyRef != nil:
+            onEscape?()
+        default:
+            break
         }
-
-        if let eventHandler {
-            RemoveEventHandler(eventHandler)
-            self.eventHandler = nil
-        }
-
-        if let fallbackGlobalMonitor {
-            NSEvent.removeMonitor(fallbackGlobalMonitor)
-            self.fallbackGlobalMonitor = nil
-        }
-
-        if let fallbackLocalMonitor {
-            NSEvent.removeMonitor(fallbackLocalMonitor)
-            self.fallbackLocalMonitor = nil
-        }
-
-        activeHotKeyID = nil
-        activeShortcut = nil
-        onTrigger = nil
-        modifierKeyState.removeAll(keepingCapacity: true)
     }
 
-    private func installModifierOnlyMonitors() {
-        guard let activeShortcut else { return }
-        guard activeShortcut.isModifierOnly else { return }
-
-        fallbackGlobalMonitor = NSEvent.addGlobalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            guard let self else { return }
-            guard self.matches(event: event, shortcut: activeShortcut) else { return }
-            self.fireIfNeeded()
+    private func installModifierMonitors() {
+        globalModifierMonitor = NSEvent.addGlobalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            let keyCode = event.keyCode
+            let flags = event.modifierFlags
+            MainActor.assumeIsolated {
+                self?.handleModifierChange(keyCode: keyCode, flags: flags)
+            }
         }
-
-        fallbackLocalMonitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { [weak self] event in
-            guard let self else { return event }
-            guard self.matches(event: event, shortcut: activeShortcut) else { return event }
-            self.fireIfNeeded()
+        localModifierMonitor = NSEvent.addLocalMonitorForEvents(matching: .flagsChanged) { [weak self] event in
+            let keyCode = event.keyCode
+            let flags = event.modifierFlags
+            MainActor.assumeIsolated {
+                self?.handleModifierChange(keyCode: keyCode, flags: flags)
+            }
             return event
         }
     }
 
-    private func handleCarbonHotKeyEvent(_ hotKeyID: EventHotKeyID) {
-        guard hotKeyID.signature == Self.signature else { return }
-        guard let activeHotKeyID, hotKeyID.id == activeHotKeyID else { return }
-        fireIfNeeded()
-    }
-
-    private func matches(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
-        if shortcut.isModifierOnly {
-            return matchesModifierOnly(event: event, shortcut: shortcut)
-        }
-        return matchesKeyCombo(event: event, shortcut: shortcut)
-    }
-
-    private func matchesKeyCombo(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
-        guard event.type == .keyDown else { return false }
-        guard UInt32(event.keyCode) == shortcut.keyCode else { return false }
-        let normalized = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        let carbon = Self.carbonModifiers(from: normalized)
-        return carbon == shortcut.modifiers
-    }
-
-    private func matchesModifierOnly(event: NSEvent, shortcut: HotkeyShortcut) -> Bool {
-        guard event.type == .flagsChanged else { return false }
-        guard UInt32(event.keyCode) == shortcut.keyCode else { return false }
-
-        let expectedFlag = Self.primaryModifierFlag(from: shortcut.modifiers)
-        guard let expectedFlag else { return false }
-
-        let hasExpectedFlag = event.modifierFlags.contains(expectedFlag)
-        let wasPressed = modifierKeyState[shortcut.keyCode] ?? false
-
-        if !wasPressed && hasExpectedFlag {
-            modifierKeyState[shortcut.keyCode] = true
-            return true
-        }
-
-        if wasPressed && !hasExpectedFlag {
-            modifierKeyState[shortcut.keyCode] = false
-        } else if !wasPressed && !hasExpectedFlag {
-            modifierKeyState[shortcut.keyCode] = false
-        }
-
-        return false
-    }
-
-    private func fireIfNeeded() {
-        let now = Date()
-        guard now.timeIntervalSince(lastTriggerTime) >= debounceWindow else {
-            return
-        }
-        lastTriggerTime = now
-        onTrigger?()
+    private func handleModifierChange(keyCode: UInt16, flags: NSEvent.ModifierFlags) {
+        guard let shortcut = activeShortcut,
+              shortcut.isModifierOnly,
+              UInt32(keyCode) == shortcut.keyCode,
+              let expectedFlag = Self.primaryModifierFlag(from: shortcut.modifiers)
+        else { return }
+        let isDown = flags.contains(expectedFlag)
+        guard isDown != isModifierDown else { return }
+        isModifierDown = isDown
+        if isDown { onPress?() } else { onRelease?() }
     }
 
     private static func primaryModifierFlag(from carbonModifiers: UInt32) -> NSEvent.ModifierFlags? {
@@ -309,19 +299,6 @@ final class GlobalHotkeyMonitor {
         if carbonModifiers & UInt32(controlKey) != 0 { return .control }
         if carbonModifiers & UInt32(shiftKey) != 0 { return .shift }
         return nil
-    }
-
-    private static func carbonModifiers(from flags: NSEvent.ModifierFlags) -> UInt32 {
-        var value: UInt32 = 0
-        if flags.contains(.control) { value |= UInt32(controlKey) }
-        if flags.contains(.option) { value |= UInt32(optionKey) }
-        if flags.contains(.shift) { value |= UInt32(shiftKey) }
-        if flags.contains(.command) { value |= UInt32(cmdKey) }
-        return value
-    }
-
-    deinit {
-        stop()
     }
 }
 

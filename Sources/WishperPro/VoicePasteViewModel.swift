@@ -11,6 +11,7 @@ private enum DefaultsKey {
     static let translationTarget = "wishper.translation_target_language"
     static let autoPaste = "wishper.auto_paste"
     static let showInDock = "wishper.show_in_dock"
+    static let hotkeyBehavior = "wishper.hotkey_behavior"
 }
 
 private func storedBool(_ key: String, default value: Bool) -> Bool {
@@ -50,6 +51,11 @@ final class VoicePasteViewModel: ObservableObject {
     @Published private(set) var hotkeyLabel = "Option + Space"
     @Published private(set) var isHotkeyReady = false
     @Published private(set) var isCapturingHotkey = false
+    @Published var hotkeyBehavior = HotkeyBehavior(
+        rawValue: UserDefaults.standard.string(forKey: DefaultsKey.hotkeyBehavior) ?? ""
+    ) ?? .auto {
+        didSet { UserDefaults.standard.set(hotkeyBehavior.rawValue, forKey: DefaultsKey.hotkeyBehavior) }
+    }
     @Published var translationEnabled = storedBool(DefaultsKey.translationEnabled, default: false) {
         didSet { persistTranslationSettings() }
     }
@@ -105,6 +111,8 @@ final class VoicePasteViewModel: ObservableObject {
     private var localCaptureMonitor: Any?
     private var globalCaptureMonitor: Any?
     private var hotkeySuspendedForCapture = false
+    private var isHandsFree = false
+    private var hotkeyPressedAt = Date.distantPast
     private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey_data"
     private static let transcriptionModel = "gpt-4o-mini-transcribe"
     private static let transcriptionTimeoutSeconds: TimeInterval = 30
@@ -118,6 +126,10 @@ final class VoicePasteViewModel: ObservableObject {
         }
 
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
+
+        hotkeyMonitor.onEscape = { [weak self] in
+            self?.cancelRecording()
+        }
 
         let preferredShortcut = loadPersistedHotkey() ?? .default
 
@@ -268,35 +280,74 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     func toggleRecordingFromButton() {
-        Task {
-            await toggleRecording(origin: .button)
-        }
-    }
-
-    private func toggleRecording(origin: TriggerOrigin) async {
-        if isTranscribing {
-            return
-        }
-
         if isRecording {
-            await stopAndTranscribe()
-        } else {
-            await startRecording(origin: origin)
+            stopAndTranscribe()
+        } else if !isTranscribing {
+            isHandsFree = true
+            startRecording()
         }
     }
 
-    private func startRecording(origin: TriggerOrigin) async {
+    func cancelRecording() {
+        guard isRecording else { return }
+        hotkeyMonitor.setEscapeEnabled(false)
+        isHandsFree = false
+        if let url = try? recorder.stop() {
+            try? FileManager.default.removeItem(at: url)
+        }
+        isRecording = false
+        stopAudioMetering()
+        soundCuePlayer.playStopCue()
+        setStatus("Ditado cancelado.", isError: false)
+    }
+
+    private func handleHotkey(_ event: HotkeyEvent) {
+        let now = Date()
+        if event == .press {
+            hotkeyPressedAt = now
+        }
+        let action = HotkeyDecider.action(
+            behavior: hotkeyBehavior,
+            event: event,
+            state: hotkeyState,
+            heldFor: now.timeIntervalSince(hotkeyPressedAt)
+        )
+        switch action {
+        case .start:
+            isHandsFree = false
+            startRecording()
+        case .stop:
+            stopAndTranscribe()
+        case .enterHandsFree:
+            isHandsFree = true
+        case .ignore:
+            break
+        }
+    }
+
+    private var hotkeyState: HotkeyState {
+        if isRecording { return .listening(handsFree: isHandsFree) }
+        return isTranscribing ? .busy : .idle
+    }
+
+    private func startRecording() {
         guard let savedKey = activeAPIKey, !savedKey.isEmpty else {
             isAPIKeySaved = false
             setStatus("Guarda a API key antes de iniciar o ditado.", isError: true)
             SettingsOpener.open()
             return
         }
-        isAPIKeySaved = true
-
-        let microphoneGranted = await Permissions.requestMicrophoneAccess()
-        guard microphoneGranted else {
+        // Checked synchronously so a quick press/release can't race an async permission prompt.
+        switch AVCaptureDevice.authorizationStatus(for: .audio) {
+        case .authorized:
+            break
+        case .notDetermined:
+            requestMicrophoneAccess()
+            setStatus("Permite o acesso ao microfone e volta a tentar.", isError: false)
+            return
+        default:
             setStatus("Permissão de microfone negada.", isError: true)
+            SettingsOpener.open()
             return
         }
 
@@ -305,24 +356,18 @@ final class VoicePasteViewModel: ObservableObject {
             isRecording = true
             lastTranscript = ""
             startAudioMetering()
+            hotkeyMonitor.setEscapeEnabled(true)
             soundCuePlayer.playStartCue()
-            let message: String
-            switch origin {
-            case .hotkey:
-                message = "A gravar. Usa \(hotkeyLabel) para parar."
-            case .button:
-                message = isHotkeyReady
-                    ? "A gravar. Usa \(hotkeyLabel) ou o botão para parar."
-                    : "A gravar. Clica novamente para parar."
-            }
-            setStatus(message, isError: false)
+            setStatus("A ouvir…", isError: false)
         } catch {
             stopAudioMetering()
             setStatus(error.localizedDescription, isError: true)
         }
     }
 
-    private func stopAndTranscribe() async {
+    private func stopAndTranscribe() {
+        hotkeyMonitor.setEscapeEnabled(false)
+        isHandsFree = false
         let recordingURL: URL
         do {
             recordingURL = try recorder.stop()
@@ -505,12 +550,11 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private func registerHotkey(_ shortcut: HotkeyShortcut) -> HotkeyRegistrationResult {
-        hotkeyMonitor.start(shortcut: shortcut) { [weak self] in
-            guard let self else { return }
-            Task {
-                await self.toggleRecording(origin: .hotkey)
-            }
-        }
+        hotkeyMonitor.start(
+            shortcut: shortcut,
+            onPress: { [weak self] in self?.handleHotkey(.press) },
+            onRelease: { [weak self] in self?.handleHotkey(.release) }
+        )
     }
 
     private func finishHotkeyCapture(_ newShortcut: HotkeyShortcut) {
@@ -716,11 +760,6 @@ final class VoicePasteViewModel: ObservableObject {
     private struct TranslationRequest {
         let sourceLanguage: String
         let targetLanguage: String
-    }
-
-    private enum TriggerOrigin {
-        case button
-        case hotkey
     }
 }
 
