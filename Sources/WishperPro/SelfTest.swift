@@ -66,6 +66,7 @@ enum SelfTest {
         checkHotkeyDecisions()
         checkAudioConversion()
         checkRealtimeProtocol()
+        checkClipboardRestore()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -240,6 +241,25 @@ enum SelfTest {
         let error = RealtimeEvent.parse(#"{"type":"error","error":{"message":"Falhou","code":"x"}}"#)
         check(error?.error?.message == "Falhou", "evento: error")
         check(RealtimeEvent.parse("não é json") == nil, "evento: texto inválido ignorado")
+    }
+
+    /// Uses a private named pasteboard, so the user's clipboard is never touched.
+    private static func checkClipboardRestore() {
+        let pasteboard = NSPasteboard(name: NSPasteboard.Name("com.wishper.selftest.\(UUID().uuidString)"))
+        defer { pasteboard.releaseGlobally() }
+        let customType = NSPasteboard.PasteboardType("com.wishper.selftest.custom")
+        let original = NSPasteboardItem()
+        original.setString("original", forType: .string)
+        original.setData(Data([1, 2, 3]), forType: customType)
+        pasteboard.clearContents()
+        pasteboard.writeObjects([original])
+
+        let saved = AutoPaster.snapshot(pasteboard)
+        AutoPaster().copy("ditado", to: pasteboard)
+        check(pasteboard.string(forType: .string) == "ditado", "clipboard: texto do ditado escrito")
+        AutoPaster.restore(saved, to: pasteboard)
+        check(pasteboard.string(forType: .string) == "original", "clipboard: texto original reposto")
+        check(pasteboard.data(forType: customType) == Data([1, 2, 3]), "clipboard: outros tipos repostos")
     }
 
     private static func jsonObject(_ text: String) -> [String: Any]? {

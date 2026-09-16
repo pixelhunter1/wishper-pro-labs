@@ -188,6 +188,8 @@ private struct DictationSettingsTab: View {
 
             Section("Texto") {
                 Toggle("Colar automaticamente", isOn: $viewModel.autoPasteEnabled)
+                Toggle("Repor o clipboard depois de colar", isOn: $viewModel.restoreClipboard)
+                    .disabled(!viewModel.autoPasteEnabled)
             }
         }
         .formStyle(.grouped)

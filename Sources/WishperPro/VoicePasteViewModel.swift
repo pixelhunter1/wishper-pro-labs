@@ -12,6 +12,7 @@ private enum DefaultsKey {
     static let autoPaste = "wishper.auto_paste"
     static let showInDock = "wishper.show_in_dock"
     static let hotkeyBehavior = "wishper.hotkey_behavior"
+    static let restoreClipboard = "wishper.restore_clipboard"
 }
 
 private func storedBool(_ key: String, default value: Bool) -> Bool {
@@ -31,6 +32,9 @@ final class VoicePasteViewModel: ObservableObject {
     @Published var isTranscribing = false
     @Published var autoPasteEnabled = storedBool(DefaultsKey.autoPaste, default: true) {
         didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: DefaultsKey.autoPaste) }
+    }
+    @Published var restoreClipboard = storedBool(DefaultsKey.restoreClipboard, default: true) {
+        didSet { UserDefaults.standard.set(restoreClipboard, forKey: DefaultsKey.restoreClipboard) }
     }
     @Published var showInDock = storedBool(DefaultsKey.showInDock, default: false) {
         didSet {
@@ -468,7 +472,8 @@ final class VoicePasteViewModel: ObservableObject {
 
                 if hasPermission {
                     do {
-                        try autoPaster.paste(text: outputText)
+                        let restoreClipboard = await MainActor.run(body: { self.restoreClipboard })
+                        try await autoPaster.paste(text: outputText, restoreClipboard: restoreClipboard)
                         await MainActor.run {
                             if let translationFailedMessage {
                                 self.setStatus(
