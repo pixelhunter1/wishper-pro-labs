@@ -44,6 +44,7 @@ enum SelfTest {
     private static func runOfflineChecks() {
         check(CommandLine.arguments.contains("--selftest"), "autoteste arrancou sem abrir a app")
         checkBrandMark()
+        checkHotkeyDecisions()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -59,5 +60,34 @@ enum SelfTest {
         } else {
             print("  info    BrandMark.svg não está no bundle; a usar o símbolo waveform")
         }
+    }
+
+    private static func checkHotkeyDecisions() {
+        func action(
+            _ behavior: HotkeyBehavior,
+            _ event: HotkeyEvent,
+            _ state: HotkeyState,
+            held: TimeInterval = 0
+        ) -> HotkeyAction {
+            HotkeyDecider.action(behavior: behavior, event: event, state: state, heldFor: held)
+        }
+        let tap = HotkeyDecider.tapThreshold
+        check(action(.toggle, .press, .idle) == .start, "atalho alternar: premir em repouso inicia")
+        check(action(.toggle, .press, .listening(handsFree: false)) == .stop, "atalho alternar: premir a ouvir termina")
+        check(action(.toggle, .release, .listening(handsFree: false)) == .ignore, "atalho alternar: largar é ignorado")
+        check(action(.hold, .press, .idle) == .start, "atalho manter: premir inicia")
+        check(action(.hold, .release, .listening(handsFree: false), held: 0.1) == .stop, "atalho manter: largar termina")
+        check(action(.auto, .press, .idle) == .start, "atalho automático: premir inicia")
+        check(
+            action(.auto, .release, .listening(handsFree: false), held: tap - 0.1) == .enterHandsFree,
+            "atalho automático: toque passa a mãos-livres"
+        )
+        check(
+            action(.auto, .release, .listening(handsFree: false), held: tap + 0.1) == .stop,
+            "atalho automático: largar depois de segurar termina"
+        )
+        check(action(.auto, .press, .listening(handsFree: true)) == .stop, "atalho automático: premir em mãos-livres termina")
+        check(action(.auto, .release, .listening(handsFree: true)) == .ignore, "atalho automático: largar em mãos-livres é ignorado")
+        check(action(.auto, .press, .busy) == .ignore, "atalho: a finalizar ignora")
     }
 }

@@ -2,6 +2,78 @@ import AppKit
 import Carbon
 import Foundation
 
+enum HotkeyBehavior: String, CaseIterable, Identifiable {
+    case auto
+    case hold
+    case toggle
+
+    var id: String { rawValue }
+
+    var displayName: String {
+        switch self {
+        case .auto: return "Automático"
+        case .hold: return "Manter premido"
+        case .toggle: return "Alternar"
+        }
+    }
+
+    var explanation: String {
+        switch self {
+        case .auto:
+            return "Mantém premido para falar enquanto seguras. Um toque rápido deixa a gravar até voltares a tocar."
+        case .hold:
+            return "Grava apenas enquanto o atalho estiver premido."
+        case .toggle:
+            return "Um toque inicia a gravação e outro toque termina."
+        }
+    }
+}
+
+enum HotkeyEvent: Equatable {
+    case press
+    case release
+}
+
+enum HotkeyState: Equatable {
+    case idle
+    case listening(handsFree: Bool)
+    case busy
+}
+
+enum HotkeyAction: Equatable {
+    case start
+    case stop
+    case enterHandsFree
+    case ignore
+}
+
+enum HotkeyDecider {
+    /// A press shorter than this is a tap (hands-free in `.auto`).
+    static let tapThreshold: TimeInterval = 0.4
+
+    static func action(
+        behavior: HotkeyBehavior,
+        event: HotkeyEvent,
+        state: HotkeyState,
+        heldFor: TimeInterval
+    ) -> HotkeyAction {
+        switch (behavior, event, state) {
+        case (_, .press, .idle):
+            return .start
+        case (.toggle, .press, .listening):
+            return .stop
+        case (.auto, .press, .listening(handsFree: true)):
+            return .stop
+        case (.hold, .release, .listening):
+            return .stop
+        case (.auto, .release, .listening(handsFree: false)):
+            return heldFor < tapThreshold ? .enterHandsFree : .stop
+        default:
+            return .ignore
+        }
+    }
+}
+
 enum HotkeyKind: String, Codable {
     case keyCombo
     case modifierOnly
