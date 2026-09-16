@@ -2,14 +2,42 @@ import AppKit
 import AVFoundation
 import Carbon
 import Foundation
+import ServiceManagement
 import SwiftUI
+
+private enum DefaultsKey {
+    static let translationEnabled = "wishper.translation_enabled"
+    static let translationSource = "wishper.translation_source_language"
+    static let translationTarget = "wishper.translation_target_language"
+    static let autoPaste = "wishper.auto_paste"
+    static let showInDock = "wishper.show_in_dock"
+}
+
+private func storedBool(_ key: String, default value: Bool) -> Bool {
+    UserDefaults.standard.object(forKey: key) as? Bool ?? value
+}
+
+private func storedLanguage(_ key: String, default value: SupportedLanguage) -> SupportedLanguage {
+    guard let raw = UserDefaults.standard.string(forKey: key) else { return value }
+    // Before pt-PT/pt-BR existed, Portuguese was saved as "pt".
+    return SupportedLanguage(rawValue: raw == "pt" ? SupportedLanguage.portuguesePT.rawValue : raw) ?? value
+}
 
 @MainActor
 final class VoicePasteViewModel: ObservableObject {
     @Published var apiKeyDraft: String = ""
     @Published var isRecording = false
     @Published var isTranscribing = false
-    @Published var autoPasteEnabled = true
+    @Published var autoPasteEnabled = storedBool(DefaultsKey.autoPaste, default: true) {
+        didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: DefaultsKey.autoPaste) }
+    }
+    @Published var showInDock = storedBool(DefaultsKey.showInDock, default: false) {
+        didSet {
+            UserDefaults.standard.set(showInDock, forKey: DefaultsKey.showInDock)
+            applyDockVisibility()
+            NSApp.activate(ignoringOtherApps: true)
+        }
+    }
     @Published var statusMessage = "Pronto para ditar."
     @Published var isStatusError = false
     @Published var lastTranscript = ""
@@ -17,33 +45,38 @@ final class VoicePasteViewModel: ObservableObject {
     @Published private(set) var isSpeechDetected = false
     @Published private(set) var isAPIKeySaved = false
     @Published private(set) var hasAccessibilityPermission = false
+    @Published private(set) var microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
     @Published private(set) var hotkeyLabel = "Option + Space"
     @Published private(set) var isHotkeyReady = false
     @Published private(set) var isCapturingHotkey = false
-    @Published var translationEnabled = false
-    @Published var selectedSourceLanguage: SupportedLanguage = .auto
-    @Published var selectedTargetLanguage: SupportedLanguage = .english
-
-    var keyStatusText: String {
-        isAPIKeySaved
-            ? "API key guardada localmente no Keychain."
-            : "Nenhuma API key guardada."
+    @Published var translationEnabled = storedBool(DefaultsKey.translationEnabled, default: false) {
+        didSet { persistTranslationSettings() }
+    }
+    @Published var selectedSourceLanguage = storedLanguage(DefaultsKey.translationSource, default: .auto) {
+        didSet { persistTranslationSettings() }
+    }
+    @Published var selectedTargetLanguage = storedLanguage(DefaultsKey.translationTarget, default: .english) {
+        didSet { persistTranslationSettings() }
     }
 
-    var accessibilityStatusText: String {
-        hasAccessibilityPermission
-            ? "Permissão de Accessibilidade ativa."
-            : "Sem permissão de Accessibilidade."
+    var keyStatusText: String {
+        isAPIKeySaved ? "Guardada no Keychain" : "Sem API key"
+    }
+
+    var needsSetup: Bool {
+        !isAPIKeySaved || microphoneStatus != .authorized || !hasAccessibilityPermission
+    }
+
+    var menuStatusText: String {
+        if isRecording { return "A ouvir…" }
+        if isTranscribing { return "A finalizar…" }
+        if isStatusError { return statusMessage }
+        return isHotkeyReady ? "Pronto · \(hotkeyLabel)" : "Atalho indisponível"
     }
 
     var isActionDisabled: Bool {
         isTranscribing || (!isRecording && !isAPIKeySaved)
-    }
-
-    var hotkeyCaptureHint: String {
-        isCapturingHotkey
-            ? "Pressiona agora a combinação desejada (Esc para cancelar)."
-            : "Define qualquer combinação diretamente pelo teclado."
     }
 
     var bubbleStateTitle: String {
@@ -56,13 +89,6 @@ final class VoicePasteViewModel: ObservableObject {
         if isTranscribing { return "processando áudio" }
         if isRecording { return isSpeechDetected ? "voz detetada" : "à escuta" }
         return "aguardando"
-    }
-
-    var translationStatusText: String {
-        guard translationEnabled else {
-            return "Tradução desativada."
-        }
-        return "Traduzir de \(selectedSourceLanguage.displayName) para \(selectedTargetLanguage.displayName)."
     }
 
     private let keychain = KeychainService()
@@ -80,9 +106,6 @@ final class VoicePasteViewModel: ObservableObject {
     private var globalCaptureMonitor: Any?
     private var hotkeySuspendedForCapture = false
     private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey_data"
-    private static let translationEnabledDefaultsKey = "wishper.translation_enabled"
-    private static let translationSourceDefaultsKey = "wishper.translation_source_language"
-    private static let translationTargetDefaultsKey = "wishper.translation_target_language"
     private static let transcriptionModel = "gpt-4o-mini-transcribe"
     private static let transcriptionTimeoutSeconds: TimeInterval = 30
     private static let transcriptionMaxRetries = 0
@@ -95,7 +118,6 @@ final class VoicePasteViewModel: ObservableObject {
         }
 
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
-        loadPersistedSettings()
 
         let preferredShortcut = loadPersistedHotkey() ?? .default
 
@@ -153,36 +175,47 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
-    func onTranslationSettingsChanged() {
-        persistTranslationSettings()
-    }
-
-    func pasteAPIKeyFromClipboard() {
-        guard let value = NSPasteboard.general.string(forType: .string) else {
-            setStatus("A área de transferência está vazia.", isError: true)
-            return
-        }
-
-        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else {
-            setStatus("Não foi encontrado texto válido para colar.", isError: true)
-            return
-        }
-
-        apiKeyDraft = trimmed
-        setStatus("API key colada. Agora clica em Guardar Key.", isError: false)
-    }
-
     func requestAccessibilityPermission() {
         hasAccessibilityPermission = autoPaster.requestAccessibilityPermission()
-        if hasAccessibilityPermission {
-            setStatus("Permissão de Accessibilidade ativa.", isError: false)
-        } else {
-            setStatus(
-                "Ativa em Definições do Sistema > Privacidade e Segurança > Acessibilidade.",
-                isError: true
-            )
+        if !hasAccessibilityPermission {
+            SystemSettings.open(.accessibility)
         }
+    }
+
+    func refreshPermissions() {
+        hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
+        microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+        launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    }
+
+    func requestMicrophoneAccess() {
+        Task {
+            _ = await Permissions.requestMicrophoneAccess()
+            refreshPermissions()
+        }
+    }
+
+    func setLaunchAtLogin(_ enabled: Bool) {
+        do {
+            if enabled {
+                try SMAppService.mainApp.register()
+            } else {
+                try SMAppService.mainApp.unregister()
+            }
+        } catch {
+            setStatus("Não foi possível alterar o arranque automático: \(error.localizedDescription)", isError: true)
+        }
+        refreshPermissions()
+    }
+
+    func applyDockVisibility() {
+        NSApp.setActivationPolicy(showInDock ? .regular : .accessory)
+    }
+
+    func copyLastTranscript() {
+        guard !lastTranscript.isEmpty else { return }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(lastTranscript, forType: .string)
     }
 
     func beginHotkeyCapture() {
@@ -256,6 +289,7 @@ final class VoicePasteViewModel: ObservableObject {
         guard let savedKey = activeAPIKey, !savedKey.isEmpty else {
             isAPIKeySaved = false
             setStatus("Guarda a API key antes de iniciar o ditado.", isError: true)
+            SettingsOpener.open()
             return
         }
         isAPIKeySaved = true
@@ -644,30 +678,11 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
-    private func loadPersistedSettings() {
-        // Migração: "pt" → "pt-PT" (variantes deixaram de ser configuradas à parte)
-        migratePortugueseLanguageSetting(key: Self.translationSourceDefaultsKey)
-        migratePortugueseLanguageSetting(key: Self.translationTargetDefaultsKey)
-
-        if UserDefaults.standard.object(forKey: Self.translationEnabledDefaultsKey) != nil {
-            translationEnabled = UserDefaults.standard.bool(forKey: Self.translationEnabledDefaultsKey)
-        }
-
-        if let sourceRaw = UserDefaults.standard.string(forKey: Self.translationSourceDefaultsKey),
-           let source = SupportedLanguage(rawValue: sourceRaw) {
-            selectedSourceLanguage = source
-        }
-
-        if let targetRaw = UserDefaults.standard.string(forKey: Self.translationTargetDefaultsKey),
-           let target = SupportedLanguage(rawValue: targetRaw) {
-            selectedTargetLanguage = target
-        }
-    }
-
     private func persistTranslationSettings() {
-        UserDefaults.standard.set(translationEnabled, forKey: Self.translationEnabledDefaultsKey)
-        UserDefaults.standard.set(selectedSourceLanguage.rawValue, forKey: Self.translationSourceDefaultsKey)
-        UserDefaults.standard.set(selectedTargetLanguage.rawValue, forKey: Self.translationTargetDefaultsKey)
+        let defaults = UserDefaults.standard
+        defaults.set(translationEnabled, forKey: DefaultsKey.translationEnabled)
+        defaults.set(selectedSourceLanguage.rawValue, forKey: DefaultsKey.translationSource)
+        defaults.set(selectedTargetLanguage.rawValue, forKey: DefaultsKey.translationTarget)
     }
 
     private func currentTranslationRequest() -> TranslationRequest? {
@@ -691,11 +706,6 @@ final class VoicePasteViewModel: ObservableObject {
         default:
             return nil
         }
-    }
-
-    private func migratePortugueseLanguageSetting(key: String) {
-        guard let raw = UserDefaults.standard.string(forKey: key), raw == "pt" else { return }
-        UserDefaults.standard.set(SupportedLanguage.portuguesePT.rawValue, forKey: key)
     }
 
     private func setStatus(_ message: String, isError: Bool) {

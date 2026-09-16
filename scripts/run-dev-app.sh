@@ -56,6 +56,8 @@ write_info_plist() {
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
   <string>13.0</string>
+  <key>LSUIElement</key>
+  <true/>
   <key>NSMicrophoneUsageDescription</key>
   <string>Wishper Pro precisa de microfone para ditado.</string>
   <key>NSPrincipalClass</key>
