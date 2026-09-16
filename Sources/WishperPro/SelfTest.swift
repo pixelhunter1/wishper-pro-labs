@@ -37,6 +37,10 @@ final class LockedList<Element>: @unchecked Sendable {
 @MainActor
 enum SelfTest {
     private static var failures = 0
+    /// Same sentence `scripts/run-dev-app.sh --selftest` speaks with `say -v Joana`.
+    private static let spokenSentence = "Olá, isto é um teste do Wishper Pro. O ditado ao vivo está a funcionar."
+    /// Speech models vary between runs (synthetic voice); a real failure (empty or cut text) scores far lower.
+    private static let minimumOverlap = 0.6
 
     static func run(audioPath: String?) -> Never {
         print("== Verificações offline ==")
@@ -68,6 +72,7 @@ enum SelfTest {
         checkRealtimeProtocol()
         checkClipboardRestore()
         checkFallbackRequest()
+        checkWordOverlap()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -104,11 +109,11 @@ enum SelfTest {
             }
             let stoppedAt = Date()
             let text = try await session.finish()
-            print("    sessão: texto ao vivo após \(format(firstLiveText ?? -1)) s; final \(format(Date().timeIntervalSince(stoppedAt))) s após parar")
+            print("    sessão: texto ao vivo após \(format(firstLiveText ?? -1)) s; final \(format(Date().timeIntervalSince(stoppedAt))) s após parar: \(text)")
             check(session.heardSpeech, "sessão: voz detetada")
             check(firstLiveText != nil, "sessão: texto ao vivo chegou antes do fim")
             check(!session.usedFallback, "sessão: texto final veio da ligação ao vivo")
-            check(text.localizedCaseInsensitiveContains("teste"), "sessão: texto final contém \"teste\"")
+            checkTranscript(text, "sessão: texto final reconhecível")
 
             let fallback = try await OpenAITranscriptionClient().transcribe(
                 wav: WAV.make(pcm16: microphone.recordedAudio),
@@ -117,7 +122,7 @@ enum SelfTest {
                 prompt: nil
             )
             print("    plano B: \(fallback)")
-            check(fallback.localizedCaseInsensitiveContains("teste"), "plano B: gpt-transcribe com languages[]")
+            checkTranscript(fallback, "plano B: gpt-transcribe com languages[]")
         } catch {
             check(false, "sessão: \(error.localizedDescription)")
         }
@@ -148,9 +153,14 @@ enum SelfTest {
         }
         let started = Date()
         let deltas = LockedList<(TimeInterval, String)>()
+        var configuration = OpenAIRealtimeTranscriber.Configuration(languages: ["pt"])
+        if let delay = ProcessInfo.processInfo.environment["WISHPER_SELFTEST_DELAY"] {
+            configuration.delay = delay
+        }
+        print("    delay: \(configuration.delay)")
         let transcriber = OpenAIRealtimeTranscriber(
             apiKey: apiKey,
-            configuration: .init(languages: ["pt"]),
+            configuration: configuration,
             onDelta: { deltas.append((Date().timeIntervalSince(started), $0)) }
         )
         await transcriber.connect()
@@ -165,7 +175,7 @@ enum SelfTest {
             print("    \(received.count) deltas; primeiro após \(format(received.first?.0 ?? -1)) s")
             print("    final \(format(Date().timeIntervalSince(committedAt))) s após o commit: \(text)")
             check(!received.isEmpty, "ao vivo: chegaram deltas enquanto se falava")
-            check(text.localizedCaseInsensitiveContains("teste"), "ao vivo: texto final contém \"teste\"")
+            checkTranscript(text, "ao vivo: texto final reconhecível")
         } catch {
             check(false, "ao vivo: \(error.localizedDescription)")
         }
@@ -337,6 +347,29 @@ enum SelfTest {
         check(text.contains("name=\"languages[]\"\r\n\r\npt\r\n"), "plano B: languages[] no multipart")
         check(!text.contains("name=\"language\""), "plano B: sem o campo antigo language")
         check(text.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav"), "plano B: ficheiro WAV")
+    }
+
+    private static func checkWordOverlap() {
+        let variant = "Olá, isto é um texto do Whisper Pro, editado ao vivo está a funcionar."
+        check(wordOverlap(spokenSentence, spokenSentence) == 1, "comparação: frase igual = 100%")
+        check(wordOverlap(variant, spokenSentence) >= minimumOverlap, "comparação: palavras trocadas passam")
+        check(wordOverlap("Olá, isto é", spokenSentence) < minimumOverlap, "comparação: texto cortado falha")
+        check(wordOverlap("", spokenSentence) == 0, "comparação: texto vazio = 0%")
+    }
+
+    /// Share of the expected words (lowercased, letters only) that appear in `text`.
+    private static func wordOverlap(_ text: String, _ expected: String) -> Double {
+        func words(_ value: String) -> Set<String> {
+            Set(value.lowercased().components(separatedBy: CharacterSet.letters.inverted).filter { !$0.isEmpty })
+        }
+        let expectedWords = words(expected)
+        guard !expectedWords.isEmpty else { return 0 }
+        return Double(expectedWords.intersection(words(text)).count) / Double(expectedWords.count)
+    }
+
+    private static func checkTranscript(_ text: String, _ label: String) {
+        let overlap = wordOverlap(text, spokenSentence)
+        check(overlap >= minimumOverlap, "\(label) (\(Int((overlap * 100).rounded()))% das palavras)")
     }
 
     private static func jsonObject(_ text: String) -> [String: Any]? {
