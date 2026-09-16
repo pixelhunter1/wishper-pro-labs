@@ -32,6 +32,8 @@ struct SettingsView: View {
                 .tabItem { Label("Geral", systemImage: "gearshape") }
             DictationSettingsTab(viewModel: viewModel)
                 .tabItem { Label("Ditado", systemImage: "mic") }
+            BubbleSettingsTab(viewModel: viewModel)
+                .tabItem { Label("Bolha", systemImage: "capsule") }
             TranslationSettingsTab(viewModel: viewModel)
                 .tabItem { Label("Tradução", systemImage: "globe") }
         }
@@ -211,6 +213,49 @@ private struct TranslationSettingsTab: View {
                 .disabled(!viewModel.translationEnabled)
             } footer: {
                 Text("A língua de origem é a língua do ditado (separador Ditado).")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct BubbleSettingsTab: View {
+    @ObservedObject var viewModel: VoicePasteViewModel
+
+    var body: some View {
+        Form {
+            Section {
+                VoiceBubbleView(
+                    phase: .listening,
+                    mode: viewModel.bubbleMode == .hidden ? .compact : viewModel.bubbleMode,
+                    level: 0.45,
+                    liveText: "Olá Rui, amanhã consigo passar aí por volta das dez para vermos o orçamento",
+                    appName: "Mail",
+                    appIcon: NSWorkspace.shared.icon(forFile: "/System/Applications/Mail.app")
+                )
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 12)
+                .opacity(viewModel.bubbleMode == .hidden ? 0.4 : 1)
+                .accessibilityHidden(true)
+            }
+
+            Section {
+                Picker("Estilo", selection: $viewModel.bubbleMode) {
+                    ForEach(BubbleMode.allCases) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                Picker("Posição", selection: $viewModel.bubblePosition) {
+                    ForEach(BubblePosition.allCases) { position in
+                        Text(position.displayName).tag(position)
+                    }
+                }
+            } footer: {
+                Text(
+                    viewModel.bubbleMode == .hidden
+                        ? "A bolha só aparece quando há um erro."
+                        : "A bolha nunca fica com o foco e deixa passar os cliques."
+                )
             }
         }
         .formStyle(.grouped)

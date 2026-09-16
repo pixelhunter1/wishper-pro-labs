@@ -21,6 +21,8 @@ private enum DefaultsKey {
     static let restoreClipboard = "wishper.restore_clipboard"
     static let showInDock = "wishper.show_in_dock"
     static let hotkeyBehavior = "wishper.hotkey_behavior"
+    static let bubbleMode = "wishper.bubble_mode"
+    static let bubblePosition = "wishper.bubble_position"
 }
 
 private func storedBool(_ key: String, default value: Bool) -> Bool {
@@ -78,6 +80,16 @@ final class VoicePasteViewModel: ObservableObject {
         rawValue: UserDefaults.standard.string(forKey: DefaultsKey.hotkeyBehavior) ?? ""
     ) ?? .auto {
         didSet { UserDefaults.standard.set(hotkeyBehavior.rawValue, forKey: DefaultsKey.hotkeyBehavior) }
+    }
+    @Published var bubbleMode = BubbleMode(
+        rawValue: UserDefaults.standard.string(forKey: DefaultsKey.bubbleMode) ?? ""
+    ) ?? .liveText {
+        didSet { UserDefaults.standard.set(bubbleMode.rawValue, forKey: DefaultsKey.bubbleMode) }
+    }
+    @Published var bubblePosition = BubblePosition(
+        rawValue: UserDefaults.standard.string(forKey: DefaultsKey.bubblePosition) ?? ""
+    ) ?? .bottomCenter {
+        didSet { UserDefaults.standard.set(bubblePosition.rawValue, forKey: DefaultsKey.bubblePosition) }
     }
 
     var isRecording: Bool { phase == .listening }
