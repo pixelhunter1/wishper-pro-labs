@@ -82,6 +82,7 @@ main() {
   if [[ -f "$ICON_PATH" ]]; then
     cp "$ICON_PATH" "$APP_PATH/Contents/Resources/AppIcon.icns"
   fi
+  cp "$ROOT_DIR/logo.svg" "$APP_PATH/Contents/Resources/BrandMark.svg"
   write_info_plist
 
   echo "[4/5] Signing bundle..."

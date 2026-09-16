@@ -43,9 +43,21 @@ enum SelfTest {
 
     private static func runOfflineChecks() {
         check(CommandLine.arguments.contains("--selftest"), "autoteste arrancou sem abrir a app")
+        checkBrandMark()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
         check(FileManager.default.fileExists(atPath: audioURL.path), "ficheiro de áudio existe")
+    }
+
+    private static func checkBrandMark() {
+        let mark = BrandMark.image(pointSize: 18)
+        check(mark.isTemplate, "marca: imagem template (adapta-se a claro/escuro)")
+        if Bundle.main.url(forResource: "BrandMark", withExtension: "svg") != nil {
+            check(mark.size == NSSize(width: 18, height: 18), "marca: 18 pt a partir do BrandMark.svg")
+            check(mark.representations.count == 2, "marca: versões @1x e @2x")
+        } else {
+            print("  info    BrandMark.svg não está no bundle; a usar o símbolo waveform")
+        }
     }
 }
