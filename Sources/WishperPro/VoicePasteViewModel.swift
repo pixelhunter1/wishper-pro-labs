@@ -3,16 +3,24 @@ import AVFoundation
 import Carbon
 import Foundation
 import ServiceManagement
-import SwiftUI
+
+enum DictationPhase: Equatable {
+    case idle
+    case listening
+    case finalizing
+    case done(String)
+    case failed(String)
+}
 
 private enum DefaultsKey {
+    static let hotkey = "wishper.push_to_talk_hotkey_data"
     static let translationEnabled = "wishper.translation_enabled"
     static let translationSource = "wishper.translation_source_language"
     static let translationTarget = "wishper.translation_target_language"
     static let autoPaste = "wishper.auto_paste"
+    static let restoreClipboard = "wishper.restore_clipboard"
     static let showInDock = "wishper.show_in_dock"
     static let hotkeyBehavior = "wishper.hotkey_behavior"
-    static let restoreClipboard = "wishper.restore_clipboard"
 }
 
 private func storedBool(_ key: String, default value: Bool) -> Bool {
@@ -27,9 +35,32 @@ private func storedLanguage(_ key: String, default value: SupportedLanguage) -> 
 
 @MainActor
 final class VoicePasteViewModel: ObservableObject {
-    @Published var apiKeyDraft: String = ""
-    @Published var isRecording = false
-    @Published var isTranscribing = false
+    @Published var apiKeyDraft = ""
+    @Published private(set) var statusMessage = "Pronto para ditar."
+    @Published private(set) var isStatusError = false
+    @Published private(set) var lastTranscript = ""
+    @Published private(set) var phase: DictationPhase = .idle
+    @Published private(set) var liveTranscript = ""
+    @Published private(set) var audioLevel: Double = 0
+    @Published private(set) var targetAppName: String?
+    @Published private(set) var targetAppIcon: NSImage?
+    @Published private(set) var isAPIKeySaved = false
+    @Published private(set) var hasAccessibilityPermission = false
+    @Published private(set) var microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
+    @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
+    @Published private(set) var hotkeyLabel = "Option + Space"
+    @Published private(set) var isHotkeyReady = false
+    @Published private(set) var isCapturingHotkey = false
+
+    @Published var translationEnabled = storedBool(DefaultsKey.translationEnabled, default: false) {
+        didSet { persistTranslationSettings() }
+    }
+    @Published var selectedSourceLanguage = storedLanguage(DefaultsKey.translationSource, default: .auto) {
+        didSet { persistTranslationSettings() }
+    }
+    @Published var selectedTargetLanguage = storedLanguage(DefaultsKey.translationTarget, default: .english) {
+        didSet { persistTranslationSettings() }
+    }
     @Published var autoPasteEnabled = storedBool(DefaultsKey.autoPaste, default: true) {
         didSet { UserDefaults.standard.set(autoPasteEnabled, forKey: DefaultsKey.autoPaste) }
     }
@@ -43,32 +74,14 @@ final class VoicePasteViewModel: ObservableObject {
             NSApp.activate(ignoringOtherApps: true)
         }
     }
-    @Published var statusMessage = "Pronto para ditar."
-    @Published var isStatusError = false
-    @Published var lastTranscript = ""
-    @Published private(set) var audioLevel: Double = 0
-    @Published private(set) var isSpeechDetected = false
-    @Published private(set) var isAPIKeySaved = false
-    @Published private(set) var hasAccessibilityPermission = false
-    @Published private(set) var microphoneStatus = AVCaptureDevice.authorizationStatus(for: .audio)
-    @Published private(set) var launchAtLoginEnabled = SMAppService.mainApp.status == .enabled
-    @Published private(set) var hotkeyLabel = "Option + Space"
-    @Published private(set) var isHotkeyReady = false
-    @Published private(set) var isCapturingHotkey = false
     @Published var hotkeyBehavior = HotkeyBehavior(
         rawValue: UserDefaults.standard.string(forKey: DefaultsKey.hotkeyBehavior) ?? ""
     ) ?? .auto {
         didSet { UserDefaults.standard.set(hotkeyBehavior.rawValue, forKey: DefaultsKey.hotkeyBehavior) }
     }
-    @Published var translationEnabled = storedBool(DefaultsKey.translationEnabled, default: false) {
-        didSet { persistTranslationSettings() }
-    }
-    @Published var selectedSourceLanguage = storedLanguage(DefaultsKey.translationSource, default: .auto) {
-        didSet { persistTranslationSettings() }
-    }
-    @Published var selectedTargetLanguage = storedLanguage(DefaultsKey.translationTarget, default: .english) {
-        didSet { persistTranslationSettings() }
-    }
+
+    var isRecording: Bool { phase == .listening }
+    var isTranscribing: Bool { phase == .finalizing }
 
     var keyStatusText: String {
         isAPIKeySaved ? "Guardada no Keychain" : "Sem API key"
@@ -79,37 +92,26 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     var menuStatusText: String {
-        if isRecording { return "A ouvir…" }
-        if isTranscribing { return "A finalizar…" }
-        if isStatusError { return statusMessage }
-        return isHotkeyReady ? "Pronto · \(hotkeyLabel)" : "Atalho indisponível"
-    }
-
-    var isActionDisabled: Bool {
-        isTranscribing || (!isRecording && !isAPIKeySaved)
-    }
-
-    var bubbleStateTitle: String {
-        if isTranscribing { return "A transcrever" }
-        if isRecording { return isSpeechDetected ? "A falar" : "A ouvir" }
-        return "Parado"
-    }
-
-    var bubbleStateSubtitle: String {
-        if isTranscribing { return "processando áudio" }
-        if isRecording { return isSpeechDetected ? "voz detetada" : "à escuta" }
-        return "aguardando"
+        switch phase {
+        case .listening:
+            return "A ouvir…"
+        case .finalizing:
+            return "A finalizar…"
+        case .done(let message), .failed(let message):
+            return message
+        case .idle:
+            if isStatusError { return statusMessage }
+            return isHotkeyReady ? "Pronto · \(hotkeyLabel)" : "Atalho indisponível"
+        }
     }
 
     private let keychain = KeychainService()
-    private let recorder = AudioRecorder()
-    private let transcriptionClient = OpenAITranscriptionClient()
     private let translationClient = OpenAITranslationClient()
     private let autoPaster = AutoPaster()
     private let hotkeyMonitor = GlobalHotkeyMonitor()
     private let soundCuePlayer = SoundCuePlayer()
-    private var transcriptionTask: Task<Void, Never>?
-    private var audioMeterTask: Task<Void, Never>?
+    private var session: DictationSession?
+    private var resetTask: Task<Void, Never>?
     private var activeAPIKey: String?
     private var activeShortcut: HotkeyShortcut = .default
     private var localCaptureMonitor: Any?
@@ -117,10 +119,7 @@ final class VoicePasteViewModel: ObservableObject {
     private var hotkeySuspendedForCapture = false
     private var isHandsFree = false
     private var hotkeyPressedAt = Date.distantPast
-    private static let hotkeyDefaultsKey = "wishper.push_to_talk_hotkey_data"
-    private static let transcriptionModel = "gpt-4o-mini-transcribe"
-    private static let transcriptionTimeoutSeconds: TimeInterval = 30
-    private static let transcriptionMaxRetries = 0
+    private var targetIsSelf = false
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -128,15 +127,12 @@ final class VoicePasteViewModel: ObservableObject {
             isAPIKeySaved = true
             activeAPIKey = savedKey
         }
-
         hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
-
         hotkeyMonitor.onEscape = { [weak self] in
-            self?.cancelRecording()
+            self?.cancelDictation()
         }
 
         let preferredShortcut = loadPersistedHotkey() ?? .default
-
         let registerPreferredResult = registerHotkey(preferredShortcut)
         switch registerPreferredResult {
         case .registered:
@@ -151,15 +147,17 @@ final class VoicePasteViewModel: ObservableObject {
                 case .failed(let message):
                     isHotkeyReady = false
                     hotkeyLabel = preferredShortcut.label
-                    setStatus("\(message) Usa o botão Iniciar Ditado.", isError: true)
+                    setStatus("\(message) Usa o menu Wishper Pro para ditar.", isError: true)
                 }
             } else if case .failed(let message) = registerPreferredResult {
                 isHotkeyReady = false
                 hotkeyLabel = preferredShortcut.label
-                setStatus("\(message) Usa o botão Iniciar Ditado.", isError: true)
+                setStatus("\(message) Usa o menu Wishper Pro para ditar.", isError: true)
             }
         }
     }
+
+    // MARK: - Settings
 
     func saveAPIKey() {
         let trimmedKey = apiKeyDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -230,8 +228,7 @@ final class VoicePasteViewModel: ObservableObject {
 
     func copyLastTranscript() {
         guard !lastTranscript.isEmpty else { return }
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString(lastTranscript, forType: .string)
+        autoPaster.copy(lastTranscript)
     }
 
     func beginHotkeyCapture() {
@@ -275,33 +272,27 @@ final class VoicePasteViewModel: ObservableObject {
         )
     }
 
-    func cancelTranscription() {
-        guard isTranscribing else { return }
-        transcriptionTask?.cancel()
-        transcriptionTask = nil
-        isTranscribing = false
-        setStatus("Transcrição cancelada.", isError: false)
-    }
+    // MARK: - Dictation
 
     func toggleRecordingFromButton() {
-        if isRecording {
-            stopAndTranscribe()
-        } else if !isTranscribing {
+        switch phase {
+        case .listening:
+            stopDictation()
+        case .finalizing:
+            break
+        case .idle, .done, .failed:
             isHandsFree = true
-            startRecording()
+            startDictation()
         }
     }
 
-    func cancelRecording() {
-        guard isRecording else { return }
-        hotkeyMonitor.setEscapeEnabled(false)
-        isHandsFree = false
-        if let url = try? recorder.stop() {
-            try? FileManager.default.removeItem(at: url)
-        }
-        isRecording = false
-        stopAudioMetering()
+    func cancelDictation() {
+        guard phase == .listening else { return }
+        session?.cancel()
+        session = nil
+        endListening()
         soundCuePlayer.playStopCue()
+        setPhase(.idle)
         setStatus("Ditado cancelado.", isError: false)
     }
 
@@ -319,9 +310,9 @@ final class VoicePasteViewModel: ObservableObject {
         switch action {
         case .start:
             isHandsFree = false
-            startRecording()
+            startDictation()
         case .stop:
-            stopAndTranscribe()
+            stopDictation()
         case .enterHandsFree:
             isHandsFree = true
         case .ignore:
@@ -330,14 +321,20 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private var hotkeyState: HotkeyState {
-        if isRecording { return .listening(handsFree: isHandsFree) }
-        return isTranscribing ? .busy : .idle
+        switch phase {
+        case .listening:
+            return .listening(handsFree: isHandsFree)
+        case .finalizing:
+            return .busy
+        case .idle, .done, .failed:
+            return .idle
+        }
     }
 
-    private func startRecording() {
-        guard let savedKey = activeAPIKey, !savedKey.isEmpty else {
+    private func startDictation() {
+        guard let apiKey = activeAPIKey, !apiKey.isEmpty else {
             isAPIKeySaved = false
-            setStatus("Guarda a API key antes de iniciar o ditado.", isError: true)
+            fail("Guarda a API key antes de iniciar o ditado.")
             SettingsOpener.open()
             return
         }
@@ -350,209 +347,152 @@ final class VoicePasteViewModel: ObservableObject {
             setStatus("Permite o acesso ao microfone e volta a tentar.", isError: false)
             return
         default:
-            setStatus("Permissão de microfone negada.", isError: true)
+            fail("Permissão de microfone negada.")
             SettingsOpener.open()
             return
         }
 
-        do {
-            try recorder.start()
-            isRecording = true
-            lastTranscript = ""
-            startAudioMetering()
-            hotkeyMonitor.setEscapeEnabled(true)
-            soundCuePlayer.playStartCue()
-            setStatus("A ouvir…", isError: false)
-        } catch {
-            stopAudioMetering()
-            setStatus(error.localizedDescription, isError: true)
+        let frontmost = NSWorkspace.shared.frontmostApplication
+        let session = DictationSession(options: .init(
+            apiKey: apiKey,
+            languages: selectedSourceLanguage.isoCode.map { [$0] } ?? [],
+            prompt: transcriptionPrompt()
+        ))
+        session.onUpdate = { [weak self] text, level in
+            self?.liveTranscript = text
+            self?.audioLevel = level
         }
-    }
-
-    private func stopAndTranscribe() {
-        hotkeyMonitor.setEscapeEnabled(false)
-        isHandsFree = false
-        let recordingURL: URL
+        session.onInterruption = { [weak self] in
+            self?.stopDictation()
+        }
         do {
-            recordingURL = try recorder.stop()
+            try session.start()
         } catch {
-            isRecording = false
-            stopAudioMetering()
-            setStatus(error.localizedDescription, isError: true)
+            fail(error.localizedDescription)
             return
         }
 
-        isRecording = false
-        stopAudioMetering()
-        soundCuePlayer.playStopCue()
-        isTranscribing = true
-        setStatus("A transcrever áudio...", isError: false)
-        transcriptionTask?.cancel()
-        transcriptionTask = Task { [weak self] in
-            guard let self else { return }
-            defer {
-                Task { @MainActor in
-                    self.isTranscribing = false
-                    self.transcriptionTask = nil
-                    try? FileManager.default.removeItem(at: recordingURL)
-                }
-            }
-
-            do {
-                guard let apiKey = await MainActor.run(body: { self.activeAPIKey }), !apiKey.isEmpty else {
-                    throw VoicePasteError.missingAPIKey
-                }
-
-                let languageHint = await MainActor.run(body: { self.transcriptionLanguageHint() })
-                let prompt = await MainActor.run(body: { self.transcriptionPrompt() })
-                let transcriptionResult = try await self.transcriptionClient.transcribeAudio(
-                    fileURL: recordingURL,
-                    apiKey: apiKey,
-                    model: Self.transcriptionModel,
-                    languageHint: languageHint,
-                    prompt: prompt,
-                    timeoutSeconds: Self.transcriptionTimeoutSeconds,
-                    maxRetries: Self.transcriptionMaxRetries
-                )
-                try Task.checkCancellation()
-
-                let cleanTranscript = transcriptionResult.text.trimmingCharacters(in: .whitespacesAndNewlines)
-                guard !cleanTranscript.isEmpty else {
-                    throw VoicePasteError.emptyTranscription
-                }
-
-                var outputText = cleanTranscript
-                var translationRequested = false
-                var translationFailedMessage: String?
-                let translationRequest = await MainActor.run(body: { self.currentTranslationRequest() })
-                if let translationRequest {
-                    translationRequested = true
-                    await MainActor.run {
-                        self.setStatus("A traduzir para \(translationRequest.targetLanguage)...", isError: false)
-                    }
-
-                    do {
-                        outputText = try await self.translationClient.translate(
-                            text: cleanTranscript,
-                            sourceLanguage: translationRequest.sourceLanguage,
-                            targetLanguage: translationRequest.targetLanguage,
-                            apiKey: apiKey
-                        )
-                    } catch {
-                        translationFailedMessage = error.localizedDescription
-                    }
-                }
-
-                await MainActor.run {
-                    self.lastTranscript = outputText
-                }
-
-                let shouldAutoPaste = await MainActor.run(body: { self.autoPasteEnabled })
-                guard shouldAutoPaste else {
-                    await MainActor.run {
-                        if let translationFailedMessage {
-                            self.setStatus(
-                                "Transcrição concluída. Tradução falhou: \(translationFailedMessage)",
-                                isError: true
-                            )
-                        } else {
-                            self.setStatus(
-                                translationRequested ? "Transcrição e tradução concluídas." : "Transcrição concluída.",
-                                isError: false
-                            )
-                        }
-                    }
-                    return
-                }
-
-                let hasPermission = autoPaster.hasAccessibilityPermission
-                await MainActor.run {
-                    self.hasAccessibilityPermission = hasPermission
-                }
-
-                if hasPermission {
-                    do {
-                        let restoreClipboard = await MainActor.run(body: { self.restoreClipboard })
-                        try await autoPaster.paste(text: outputText, restoreClipboard: restoreClipboard)
-                        await MainActor.run {
-                            if let translationFailedMessage {
-                                self.setStatus(
-                                    "Transcrição colada. Tradução falhou: \(translationFailedMessage)",
-                                    isError: true
-                                )
-                            } else {
-                                self.setStatus(
-                                    translationRequested
-                                        ? "Transcrição traduzida e colada no campo ativo."
-                                        : "Transcrição colada no campo ativo.",
-                                    isError: false
-                                )
-                            }
-                        }
-                    } catch {
-                        await MainActor.run {
-                            let baseMessage: String
-                            if let translationFailedMessage {
-                                baseMessage = "Transcrição pronta. Tradução falhou: \(translationFailedMessage)"
-                            } else {
-                                baseMessage = translationRequested
-                                    ? "Transcrição traduzida pronta."
-                                    : "Transcrição pronta."
-                            }
-                            self.setStatus(
-                                "\(baseMessage) \(error.localizedDescription)",
-                                isError: true
-                            )
-                        }
-                    }
-                } else {
-                    await MainActor.run {
-                        if let translationFailedMessage {
-                            self.setStatus(
-                                "Transcrição pronta. Tradução falhou: \(translationFailedMessage)",
-                                isError: true
-                            )
-                        } else {
-                            self.setStatus(
-                                translationRequested
-                                    ? "Tradução pronta, mas falta permissão de Accessibilidade para colar."
-                                    : "Transcrição pronta, mas falta permissão de Accessibilidade para colar.",
-                                isError: true
-                            )
-                        }
-                    }
-                }
-            } catch is CancellationError {
-                await MainActor.run {
-                    self.setStatus("Transcrição cancelada.", isError: false)
-                }
-            } catch {
-                await MainActor.run {
-                    self.setStatus(error.localizedDescription, isError: true)
-                }
-            }
-        }
-    }
-
-    private func startAudioMetering() {
-        stopAudioMetering()
-        audioMeterTask = Task { [weak self] in
-            guard let self else { return }
-            while !Task.isCancelled {
-                let level = self.recorder.currentAudioLevel()
-                self.audioLevel = level
-                self.isSpeechDetected = level > 0.12
-                try? await Task.sleep(for: .milliseconds(120))
-            }
-        }
-    }
-
-    private func stopAudioMetering() {
-        audioMeterTask?.cancel()
-        audioMeterTask = nil
+        self.session = session
+        targetAppName = frontmost?.localizedName
+        targetAppIcon = frontmost?.icon
+        targetIsSelf = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        liveTranscript = ""
         audioLevel = 0
-        isSpeechDetected = false
+        setPhase(.listening)
+        hotkeyMonitor.setEscapeEnabled(true)
+        soundCuePlayer.playStartCue()
+        setStatus("A ouvir…", isError: false)
     }
+
+    private func stopDictation() {
+        guard phase == .listening, let session else { return }
+        endListening()
+        soundCuePlayer.playStopCue()
+        setPhase(.finalizing)
+        setStatus("A finalizar…", isError: false)
+        Task { [weak self] in
+            do {
+                let text = try await session.finish()
+                await self?.deliver(text, usedFallback: session.usedFallback)
+            } catch {
+                self?.fail(error.localizedDescription)
+            }
+            if self?.session === session {
+                self?.session = nil
+            }
+        }
+    }
+
+    private func endListening() {
+        hotkeyMonitor.setEscapeEnabled(false)
+        isHandsFree = false
+        audioLevel = 0
+    }
+
+    private func deliver(_ transcript: String, usedFallback: Bool) async {
+        var text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else {
+            fail("Não foi possível gerar texto da gravação.")
+            return
+        }
+
+        var warning: String?
+        if translationEnabled, let apiKey = activeAPIKey {
+            do {
+                text = try await translationClient.translate(
+                    text: text,
+                    sourceLanguage: selectedSourceLanguage.translationName,
+                    targetLanguage: selectedTargetLanguage.translationName,
+                    apiKey: apiKey
+                )
+            } catch {
+                warning = "Tradução falhou: \(error.localizedDescription)"
+            }
+        }
+        lastTranscript = text
+        hasAccessibilityPermission = autoPaster.hasAccessibilityPermission
+
+        if autoPasteEnabled, hasAccessibilityPermission, !targetIsSelf {
+            do {
+                try await autoPaster.paste(text: text, restoreClipboard: restoreClipboard)
+                complete(targetAppName.map { "Colado · \($0)" } ?? "Colado", warning: warning, usedFallback: usedFallback)
+                return
+            } catch {
+                warning = warning ?? error.localizedDescription
+            }
+        } else if autoPasteEnabled, !hasAccessibilityPermission {
+            warning = warning ?? "Falta a permissão de Acessibilidade para colar. O texto ficou no clipboard."
+        }
+        autoPaster.copy(text)
+        complete("Copiado", warning: warning, usedFallback: usedFallback)
+    }
+
+    private func complete(_ message: String, warning: String?, usedFallback: Bool) {
+        setPhase(.done(message))
+        if let warning {
+            setStatus(warning, isError: true)
+        } else {
+            setStatus(usedFallback ? "\(message) (modo ficheiro)" : message, isError: false)
+        }
+    }
+
+    private func fail(_ message: String) {
+        setPhase(.failed(message))
+        setStatus(message, isError: true)
+    }
+
+    /// `done` stays visible for 1.2 s and `failed` for 2.5 s, then the phase returns to idle.
+    private func setPhase(_ newPhase: DictationPhase) {
+        phase = newPhase
+        resetTask?.cancel()
+        let visibleFor: Duration
+        switch newPhase {
+        case .done:
+            visibleFor = .milliseconds(1_200)
+        case .failed:
+            visibleFor = .milliseconds(2_500)
+        case .idle, .listening, .finalizing:
+            return
+        }
+        resetTask = Task { [weak self] in
+            try? await Task.sleep(for: visibleFor)
+            guard !Task.isCancelled, let self, self.phase == newPhase else { return }
+            self.phase = .idle
+        }
+    }
+
+    private func transcriptionPrompt() -> String? {
+        switch selectedSourceLanguage {
+        case .portuguesePT:
+            return "Transcrição em português europeu de Portugal. Utilizar ortografia e vocabulário de Portugal (ex: facto, autocarro, telemóvel, pequeno-almoço, ecrã)."
+        case .portugueseBR:
+            return "Transcrição em português brasileiro. Utilizar ortografia e vocabulário do Brasil (ex: fato, ônibus, celular, café da manhã, tela)."
+        default:
+            return nil
+        }
+    }
+
+    // MARK: - Hotkey
 
     private func registerHotkey(_ shortcut: HotkeyShortcut) -> HotkeyRegistrationResult {
         hotkeyMonitor.start(
@@ -706,7 +646,7 @@ final class VoicePasteViewModel: ObservableObject {
     }
 
     private func loadPersistedHotkey() -> HotkeyShortcut? {
-        guard let data = UserDefaults.standard.data(forKey: Self.hotkeyDefaultsKey) else {
+        guard let data = UserDefaults.standard.data(forKey: DefaultsKey.hotkey) else {
             return nil
         }
         return try? JSONDecoder().decode(HotkeyShortcut.self, from: data)
@@ -714,7 +654,7 @@ final class VoicePasteViewModel: ObservableObject {
 
     private func persistHotkey(_ shortcut: HotkeyShortcut) {
         guard let data = try? JSONEncoder().encode(shortcut) else { return }
-        UserDefaults.standard.set(data, forKey: Self.hotkeyDefaultsKey)
+        UserDefaults.standard.set(data, forKey: DefaultsKey.hotkey)
     }
 
     private func applyRegisteredHotkey(_ shortcut: HotkeyShortcut, persistSelection: Bool) {
@@ -734,37 +674,9 @@ final class VoicePasteViewModel: ObservableObject {
         defaults.set(selectedTargetLanguage.rawValue, forKey: DefaultsKey.translationTarget)
     }
 
-    private func currentTranslationRequest() -> TranslationRequest? {
-        guard translationEnabled else { return nil }
-        return TranslationRequest(
-            sourceLanguage: selectedSourceLanguage.translationName,
-            targetLanguage: selectedTargetLanguage.translationName
-        )
-    }
-
-    private func transcriptionLanguageHint() -> String? {
-        return selectedSourceLanguage.isoCode
-    }
-
-    private func transcriptionPrompt() -> String? {
-        switch selectedSourceLanguage {
-        case .portuguesePT:
-            return "Transcrição em português europeu de Portugal. Utilizar ortografia e vocabulário de Portugal (ex: facto, autocarro, telemóvel, pequeno-almoço, ecrã)."
-        case .portugueseBR:
-            return "Transcrição em português brasileiro. Utilizar ortografia e vocabulário do Brasil (ex: fato, ônibus, celular, café da manhã, tela)."
-        default:
-            return nil
-        }
-    }
-
     private func setStatus(_ message: String, isError: Bool) {
         statusMessage = message
         isStatusError = isError
-    }
-
-    private struct TranslationRequest {
-        let sourceLanguage: String
-        let targetLanguage: String
     }
 }
 
@@ -812,19 +724,5 @@ enum SupportedLanguage: String, CaseIterable, Identifiable {
 
     static var targetLanguages: [SupportedLanguage] {
         allCases.filter { $0 != .auto }
-    }
-}
-
-private enum VoicePasteError: LocalizedError {
-    case missingAPIKey
-    case emptyTranscription
-
-    var errorDescription: String? {
-        switch self {
-        case .missingAPIKey:
-            return "API key não encontrada."
-        case .emptyTranscription:
-            return "Não foi possível gerar texto da gravação."
-        }
     }
 }

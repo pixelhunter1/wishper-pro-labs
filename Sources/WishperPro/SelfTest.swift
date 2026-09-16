@@ -67,6 +67,7 @@ enum SelfTest {
         checkAudioConversion()
         checkRealtimeProtocol()
         checkClipboardRestore()
+        checkFallbackRequest()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -76,6 +77,65 @@ enum SelfTest {
             return
         }
         await checkLiveTranscriber(audioURL: audioURL, apiKey: apiKey)
+        await checkDictationSession(audioURL: audioURL, apiKey: apiKey)
+    }
+
+    private static func checkDictationSession(audioURL: URL, apiKey: String) async {
+        guard let file = try? AVAudioFile(forReading: audioURL) else {
+            check(false, "sessão: ler o ficheiro de áudio")
+            return
+        }
+        let session = DictationSession(options: .init(apiKey: apiKey, languages: ["pt"], prompt: nil))
+        var firstLiveText: TimeInterval?
+        let started = Date()
+        session.onUpdate = { text, _ in
+            if firstLiveText == nil, !text.isEmpty {
+                firstLiveText = Date().timeIntervalSince(started)
+            }
+        }
+        do {
+            let microphone = try session.startWithoutMicrophone(inputFormat: file.processingFormat)
+            let frames = AVAudioFrameCount(file.processingFormat.sampleRate / 10)
+            while file.framePosition < file.length {
+                guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames) else { break }
+                try file.read(into: buffer, frameCount: frames)
+                microphone.ingest(buffer)
+                try await Task.sleep(for: .milliseconds(100))
+            }
+            let stoppedAt = Date()
+            let text = try await session.finish()
+            print("    sessão: texto ao vivo após \(format(firstLiveText ?? -1)) s; final \(format(Date().timeIntervalSince(stoppedAt))) s após parar")
+            check(session.heardSpeech, "sessão: voz detetada")
+            check(firstLiveText != nil, "sessão: texto ao vivo chegou antes do fim")
+            check(!session.usedFallback, "sessão: texto final veio da ligação ao vivo")
+            check(text.localizedCaseInsensitiveContains("teste"), "sessão: texto final contém \"teste\"")
+
+            let fallback = try await OpenAITranscriptionClient().transcribe(
+                wav: WAV.make(pcm16: microphone.recordedAudio),
+                apiKey: apiKey,
+                languages: ["pt"],
+                prompt: nil
+            )
+            print("    plano B: \(fallback)")
+            check(fallback.localizedCaseInsensitiveContains("teste"), "plano B: gpt-transcribe com languages[]")
+        } catch {
+            check(false, "sessão: \(error.localizedDescription)")
+        }
+
+        let silent = DictationSession(options: .init(apiKey: apiKey, languages: ["pt"], prompt: nil))
+        do {
+            let silenceFormat = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+            let microphone = try silent.startWithoutMicrophone(inputFormat: silenceFormat)
+            let buffer = AVAudioPCMBuffer(pcmFormat: silenceFormat, frameCapacity: 48_000)!
+            buffer.frameLength = 48_000
+            microphone.ingest(buffer)
+            _ = try await silent.finish()
+            check(false, "sessão: silêncio devia dar \"Não ouvi nada\"")
+        } catch DictationError.noSpeech {
+            check(true, "sessão: silêncio dá \"Não ouvi nada\" sem commit")
+        } catch {
+            check(false, "sessão: silêncio deu outro erro: \(error.localizedDescription)")
+        }
     }
 
     private static func checkLiveTranscriber(audioURL: URL, apiKey: String) async {
@@ -260,6 +320,23 @@ enum SelfTest {
         AutoPaster.restore(saved, to: pasteboard)
         check(pasteboard.string(forType: .string) == "original", "clipboard: texto original reposto")
         check(pasteboard.data(forType: customType) == Data([1, 2, 3]), "clipboard: outros tipos repostos")
+    }
+
+    private static func checkFallbackRequest() {
+        let fields = OpenAITranscriptionClient.formFields(model: "gpt-transcribe", languages: ["pt"], prompt: nil)
+        check(
+            fields.map(\.name) == ["model", "response_format", "languages[]"],
+            "plano B: campos model, response_format, languages[]"
+        )
+        let body = OpenAITranscriptionClient.multipartBody(
+            boundary: "B",
+            fields: fields,
+            wav: WAV.make(pcm16: Data(count: 2))
+        )
+        let text = String(decoding: body, as: UTF8.self)
+        check(text.contains("name=\"languages[]\"\r\n\r\npt\r\n"), "plano B: languages[] no multipart")
+        check(!text.contains("name=\"language\""), "plano B: sem o campo antigo language")
+        check(text.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav"), "plano B: ficheiro WAV")
     }
 
     private static func jsonObject(_ text: String) -> [String: Any]? {

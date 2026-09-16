@@ -23,9 +23,9 @@ final class FloatingBubbleController: ObservableObject {
     }
 
     private func bindState() {
-        Publishers.CombineLatest(viewModel.$isRecording, viewModel.$isTranscribing)
+        viewModel.$phase
             .receive(on: RunLoop.main)
-            .sink { [weak self] _, _ in
+            .sink { [weak self] _ in
                 self?.updateVisibility()
             }
             .store(in: &cancellables)
@@ -108,8 +108,8 @@ private struct FloatingBubbleView: View {
         ZStack {
             Color.clear
             VoiceBubbleView(
-                title: viewModel.bubbleStateTitle,
-                subtitle: viewModel.bubbleStateSubtitle,
+                title: viewModel.isTranscribing ? "A finalizar" : "A ouvir",
+                subtitle: viewModel.liveTranscript.isEmpty ? "à escuta" : "texto ao vivo",
                 isRecording: viewModel.isRecording,
                 isTranscribing: viewModel.isTranscribing,
                 audioLevel: viewModel.audioLevel
