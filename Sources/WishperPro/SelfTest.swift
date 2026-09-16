@@ -65,10 +65,65 @@ enum SelfTest {
         checkBrandMark()
         checkHotkeyDecisions()
         checkAudioConversion()
+        checkRealtimeProtocol()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
         check(FileManager.default.fileExists(atPath: audioURL.path), "ficheiro de áudio existe")
+        guard let apiKey = KeychainService().loadAPIKey(), !apiKey.isEmpty else {
+            check(false, "API key no Keychain (abre a app dev, guarda a key nas Definições e repete)")
+            return
+        }
+        await checkLiveTranscriber(audioURL: audioURL, apiKey: apiKey)
+    }
+
+    private static func checkLiveTranscriber(audioURL: URL, apiKey: String) async {
+        let chunks: [Data]
+        do {
+            chunks = try pcmChunks(from: audioURL)
+        } catch {
+            check(false, "ler o ficheiro de áudio: \(error.localizedDescription)")
+            return
+        }
+        let started = Date()
+        let deltas = LockedList<(TimeInterval, String)>()
+        let transcriber = OpenAIRealtimeTranscriber(
+            apiKey: apiKey,
+            configuration: .init(languages: ["pt"]),
+            onDelta: { deltas.append((Date().timeIntervalSince(started), $0)) }
+        )
+        await transcriber.connect()
+        for chunk in chunks {
+            await transcriber.append(chunk)
+            try? await Task.sleep(for: .milliseconds(100))
+        }
+        let committedAt = Date()
+        do {
+            let text = try await transcriber.commit()
+            let received = deltas.all
+            print("    \(received.count) deltas; primeiro após \(format(received.first?.0 ?? -1)) s")
+            print("    final \(format(Date().timeIntervalSince(committedAt))) s após o commit: \(text)")
+            check(!received.isEmpty, "ao vivo: chegaram deltas enquanto se falava")
+            check(text.localizedCaseInsensitiveContains("teste"), "ao vivo: texto final contém \"teste\"")
+        } catch {
+            check(false, "ao vivo: \(error.localizedDescription)")
+        }
+        await transcriber.close()
+    }
+
+    private static func pcmChunks(from url: URL) throws -> [Data] {
+        let file = try AVAudioFile(forReading: url)
+        let stream = MicrophoneStream()
+        let chunks = LockedList<Data>()
+        try stream.prepare(inputFormat: file.processingFormat) { chunk, _ in chunks.append(chunk) }
+        let frames = AVAudioFrameCount(file.processingFormat.sampleRate / 10)
+        while file.framePosition < file.length {
+            guard let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat, frameCapacity: frames) else { break }
+            try file.read(into: buffer, frameCount: frames)
+            stream.ingest(buffer)
+        }
+        stream.stop()
+        return chunks.all
     }
 
     private static func checkBrandMark() {
@@ -143,6 +198,52 @@ enum SelfTest {
         check(stream.recordedAudio.count == total, "conversor: gravação completa guardada")
         let level = received.dropFirst().first?.1 ?? 0
         check(level > 0.5 && level < 0.65, "nível: seno a -20 dBFS ≈ 0,58 (obtido \(format(level)))")
+    }
+
+    private static func checkRealtimeProtocol() {
+        var configuration = OpenAIRealtimeTranscriber.Configuration()
+        let bare = jsonObject(OpenAIRealtimeTranscriber.sessionUpdateJSON(configuration))
+        let session = bare?["session"] as? [String: Any]
+        let input = (session?["audio"] as? [String: Any])?["input"] as? [String: Any]
+        let transcription = input?["transcription"] as? [String: Any]
+        check(bare?["type"] as? String == "session.update", "sessão: tipo session.update")
+        check(session?["type"] as? String == "transcription", "sessão: tipo transcription")
+        check(input?["turn_detection"] is NSNull, "sessão: turn_detection null")
+        check((input?["format"] as? [String: Any])?["rate"] as? Int == 24_000, "sessão: PCM a 24 kHz")
+        check(transcription?["model"] as? String == "gpt-live-transcribe", "sessão: modelo gpt-live-transcribe")
+        check(
+            transcription?["languages"] == nil && transcription?["prompt"] == nil,
+            "sessão: sem languages nem prompt em Auto"
+        )
+
+        configuration.languages = ["pt"]
+        configuration.prompt = "Português de Portugal."
+        let hinted = jsonObject(OpenAIRealtimeTranscriber.sessionUpdateJSON(configuration))
+        let hintedSession = hinted?["session"] as? [String: Any]
+        let hintedInput = (hintedSession?["audio"] as? [String: Any])?["input"] as? [String: Any]
+        let hints = hintedInput?["transcription"] as? [String: Any]
+        check(hints?["languages"] as? [String] == ["pt"], "sessão: languages enviado")
+        check(hints?["prompt"] as? String == "Português de Portugal.", "sessão: prompt enviado")
+
+        let append = jsonObject(OpenAIRealtimeTranscriber.appendJSON(Data([1, 2, 3])))
+        check(append?["type"] as? String == "input_audio_buffer.append", "append: tipo")
+        check(append?["audio"] as? String == "AQID", "append: áudio em base64")
+
+        let delta = RealtimeEvent.parse(
+            #"{"type":"conversation.item.input_audio_transcription.delta","item_id":"i1","delta":"Olá"}"#
+        )
+        check(delta?.delta == "Olá", "evento: delta")
+        let completed = RealtimeEvent.parse(
+            #"{"type":"conversation.item.input_audio_transcription.completed","transcript":"Olá mundo"}"#
+        )
+        check(completed?.transcript == "Olá mundo", "evento: completed")
+        let error = RealtimeEvent.parse(#"{"type":"error","error":{"message":"Falhou","code":"x"}}"#)
+        check(error?.error?.message == "Falhou", "evento: error")
+        check(RealtimeEvent.parse("não é json") == nil, "evento: texto inválido ignorado")
+    }
+
+    private static func jsonObject(_ text: String) -> [String: Any]? {
+        try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
     }
 
     private static func sineBuffer(format: AVAudioFormat, frames: Int, startFrame: Int) -> AVAudioPCMBuffer {
