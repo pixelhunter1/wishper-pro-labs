@@ -15,8 +15,10 @@ struct DictationTarget: Sendable, Equatable {
 enum FocusDetector {
     /// Longest wait for each Accessibility request to the browser.
     private static let messagingTimeout: Float = 0.25
-    /// Stops the search in very large windows.
+    /// Most Accessibility role lookups in one search.
     private static let maxVisitedElements = 400
+    /// Longest time the whole page-address search may take.
+    private static let searchBudget: TimeInterval = 1
 
     /// Reads the frontmost app now; the page host is read in the background.
     @MainActor
@@ -85,17 +87,25 @@ enum FocusDetector {
     }
 
     /// Breadth-first, so browser chrome (address bar) is found before page content; web content is not entered.
+    /// Stops after `maxVisitedElements` Accessibility role lookups or `searchBudget` seconds.
     private nonisolated static func firstDescendant(of root: AXUIElement, role wanted: String) -> AXUIElement? {
+        let deadline = Date().addingTimeInterval(searchBudget)
         var queue = [root]
-        var visited = 0
-        while !queue.isEmpty, visited < maxVisitedElements {
+        var lookups = 0
+        while !queue.isEmpty {
+            if Date() >= deadline {
+                return nil
+            }
             let current = queue.removeFirst()
-            visited += 1
             guard let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] else { continue }
             for child in children {
                 let role = attribute(child, kAXRoleAttribute) as? String
+                lookups += 1
                 if role == wanted {
                     return child
+                }
+                if lookups >= maxVisitedElements || Date() >= deadline {
+                    return nil
                 }
                 if role != "AXWebArea" {
                     queue.append(child)
