@@ -76,6 +76,7 @@ enum SelfTest {
         checkWordOverlap()
         checkStyleCatalog()
         checkPersonalDictionary()
+        checkTextSettings()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -449,6 +450,46 @@ enum SelfTest {
             PersonalDictionary.sanitized(["Rui", "", "rui", "<>", "Ana\n"]) == ["Rui", "Ana"],
             "dicionário: ao ler, ignora inválidas e repetidas"
         )
+    }
+
+    /// Uses a private preferences suite, so the app's own settings are never touched.
+    private static func checkTextSettings() {
+        let suite = "com.wishper.selftest.\(UUID().uuidString)"
+        guard let defaults = UserDefaults(suiteName: suite) else {
+            check(false, "definições de texto: criar preferências de teste")
+            return
+        }
+        defer { defaults.removePersistentDomain(forName: suite) }
+
+        let settings = TextSettings(defaults: defaults)
+        check(settings.cleanupEnabled, "definições de texto: IA ligada por omissão")
+        check(settings.dictionary == ["Wishper Pro"], "definições de texto: dicionário começa com Wishper Pro")
+        check(settings.style(for: .messages) == .casual, "definições de texto: Mensagens em Casual")
+        check(settings.effectiveStyle(for: .email) == .formal, "definições de texto: Email em Formal")
+
+        settings.setStyle(.formal, for: .messages)
+        settings.setCategory(.email, forKey: "site:example.com")
+        settings.recordTarget(key: "site:example.com", name: "example.com")
+        for index in 0..<35 {
+            settings.recordTarget(key: "app:test.\(index)", name: "App \(index)")
+        }
+        check(settings.addWord("Rui") == nil, "definições de texto: acrescenta palavra")
+        check(settings.addWord("rui") == .duplicate, "definições de texto: recusa palavra repetida")
+        settings.cleanupEnabled = false
+
+        let reloaded = TextSettings(defaults: defaults)
+        check(reloaded.style(for: .messages) == .formal, "definições de texto: estilo guardado")
+        check(reloaded.category(forKey: "site:example.com") == .email, "definições de texto: tipo escolhido guardado")
+        check(reloaded.dictionary == ["Wishper Pro", "Rui"], "definições de texto: dicionário guardado")
+        check(reloaded.recentTargets.first?.key == "app:test.34", "definições de texto: sítio mais recente primeiro")
+        check(reloaded.recentTargets.count == 30, "definições de texto: no máximo 30 sítios")
+        check(
+            reloaded.recentTargets.contains { $0.key == "site:example.com" },
+            "definições de texto: sítio com tipo escolhido fica na lista"
+        )
+        check(reloaded.effectiveStyle(for: .messages) == .unchanged, "definições de texto: IA desligada = Sem alterações")
+        reloaded.setCategory(nil, forKey: "site:example.com")
+        check(reloaded.category(forKey: "site:example.com") == .other, "definições de texto: Automático volta ao catálogo")
     }
 
     private static func checkWordOverlap() {

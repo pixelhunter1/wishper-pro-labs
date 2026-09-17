@@ -1,3 +1,4 @@
+import Combine
 import Foundation
 
 /// Where the dictated text is going; each type has its own style.
@@ -218,5 +219,109 @@ enum PersonalDictionary {
                 result = next
             }
         }
+    }
+}
+
+struct RecentTarget: Codable, Equatable, Identifiable {
+    let key: String
+    let name: String
+
+    var id: String { key }
+}
+
+/// Cleanup, styles, per-place types and the dictionary, saved in UserDefaults.
+@MainActor
+final class TextSettings: ObservableObject {
+    private enum Key {
+        static let cleanupEnabled = "wishper.cleanup_enabled"
+        static let styles = "wishper.styles"
+        static let targetCategories = "wishper.target_categories"
+        static let recentTargets = "wishper.recent_targets"
+        static let dictionary = "wishper.dictionary"
+    }
+
+    static let maxRecentTargets = 30
+
+    @Published var cleanupEnabled: Bool {
+        didSet { defaults.set(cleanupEnabled, forKey: Key.cleanupEnabled) }
+    }
+    @Published private(set) var styles: [AppCategory: TextStyle]
+    @Published private(set) var targetCategories: [String: AppCategory]
+    @Published private(set) var recentTargets: [RecentTarget]
+    @Published private(set) var dictionary: [String]
+
+    private let defaults: UserDefaults
+
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        cleanupEnabled = defaults.object(forKey: Key.cleanupEnabled) as? Bool ?? true
+        let savedStyles = defaults.dictionary(forKey: Key.styles) as? [String: String] ?? [:]
+        styles = Dictionary(uniqueKeysWithValues: AppCategory.allCases.map { category in
+            (category, savedStyles[category.rawValue].flatMap(TextStyle.init(rawValue:)) ?? category.defaultStyle)
+        })
+        let savedCategories = defaults.dictionary(forKey: Key.targetCategories) as? [String: String] ?? [:]
+        targetCategories = savedCategories.compactMapValues(AppCategory.init(rawValue:))
+        let savedTargets = defaults.data(forKey: Key.recentTargets)
+            .flatMap { try? JSONDecoder().decode([RecentTarget].self, from: $0) }
+        recentTargets = savedTargets ?? []
+        dictionary = PersonalDictionary.sanitized(
+            defaults.stringArray(forKey: Key.dictionary) ?? PersonalDictionary.defaultEntries
+        )
+    }
+
+    func style(for category: AppCategory) -> TextStyle {
+        styles[category] ?? category.defaultStyle
+    }
+
+    func setStyle(_ style: TextStyle, for category: AppCategory) {
+        styles[category] = style
+        defaults.set(
+            Dictionary(uniqueKeysWithValues: styles.map { ($0.key.rawValue, $0.value.rawValue) }),
+            forKey: Key.styles
+        )
+    }
+
+    /// The style a dictation uses: "Sem alterações" while AI cleanup is off.
+    func effectiveStyle(for category: AppCategory) -> TextStyle {
+        cleanupEnabled ? style(for: category) : .unchanged
+    }
+
+    func category(forKey key: String) -> AppCategory {
+        StyleCatalog.category(forKey: key, overrides: targetCategories)
+    }
+
+    /// `nil` goes back to the catalog's type.
+    func setCategory(_ category: AppCategory?, forKey key: String) {
+        targetCategories[key] = category
+        defaults.set(targetCategories.mapValues(\.rawValue), forKey: Key.targetCategories)
+    }
+
+    /// Most recent first. Beyond 30, the oldest places without a chosen type are dropped.
+    func recordTarget(key: String, name: String) {
+        var targets = recentTargets.filter { $0.key != key }
+        targets.insert(RecentTarget(key: key, name: name), at: 0)
+        while targets.count > Self.maxRecentTargets,
+              let index = targets.lastIndex(where: { targetCategories[$0.key] == nil }) {
+            targets.remove(at: index)
+        }
+        recentTargets = targets
+        defaults.set(try? JSONEncoder().encode(targets), forKey: Key.recentTargets)
+    }
+
+    /// Returns the reason when the word is refused.
+    func addWord(_ word: String) -> PersonalDictionary.Rejection? {
+        switch PersonalDictionary.adding(word, to: dictionary) {
+        case .success(let entries):
+            dictionary = entries
+            defaults.set(entries, forKey: Key.dictionary)
+            return nil
+        case .failure(let rejection):
+            return rejection
+        }
+    }
+
+    func removeWord(_ word: String) {
+        dictionary.removeAll { $0 == word }
+        defaults.set(dictionary, forKey: Key.dictionary)
     }
 }
