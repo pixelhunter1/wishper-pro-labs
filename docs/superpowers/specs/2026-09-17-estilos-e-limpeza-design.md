@@ -343,6 +343,12 @@ Sem alterações a `Package.swift` nem aos scripts.
 
 - Que browsers dão o endereço pela Acessibilidade (Safari pela área web; Chromium pela barra de endereço;
   Firefox) e os bundle IDs do catálogo.
-- O plano B aceita `keywords[]` no multipart.
-- `strict: true` no `json_schema` funciona com `reasoning_effort: "none"` no Chat Completions.
-- Tempo da limpeza: objetivo < 1 s para a maioria dos ditados; se ficar acima, avaliar o modo Fast.
+
+Confirmado num protótipo (2026-09-17):
+- o plano B aceita `keywords[]` no multipart, e a ligação ao vivo aceita `keywords` (com o dicionário, "Wishper"
+  passou a ser reconhecido ao vivo);
+- `strict: true` no `json_schema` funciona com `reasoning_effort: "none"` no Chat Completions;
+- tempo da limpeza: 1,0–1,6 s (mediana ≈ 1,1 s) no modo normal; o modo Fast (`service_tier: "fast"`) deu
+  0,8–1,6 s (mediana ≈ 1,0 s), sem ganho claro — fica o modo normal, sem `service_tier`;
+- as frases de teste saíram bem limpas ("Wishper Pro", "Swift", "JSON", pontuação) e um pedido ditado ("podes
+  criar uma função…") ficou escrito como pergunta, sem ser respondido.
