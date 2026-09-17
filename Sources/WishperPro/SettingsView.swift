@@ -32,10 +32,14 @@ struct SettingsView: View {
                 .tabItem { Label("Geral", systemImage: "gearshape") }
             DictationSettingsTab(viewModel: viewModel)
                 .tabItem { Label("Ditado", systemImage: "mic") }
-            BubbleSettingsTab(viewModel: viewModel)
-                .tabItem { Label("Bolha", systemImage: "capsule") }
+            StylesSettingsTab(settings: viewModel.textSettings)
+                .tabItem { Label("Estilos", systemImage: "textformat") }
+            DictionarySettingsTab(settings: viewModel.textSettings)
+                .tabItem { Label("Dicionário", systemImage: "character.book.closed") }
             TranslationSettingsTab(viewModel: viewModel)
                 .tabItem { Label("Tradução", systemImage: "globe") }
+            BubbleSettingsTab(viewModel: viewModel)
+                .tabItem { Label("Bolha", systemImage: "capsule") }
         }
         .frame(width: 540, height: 500)
         .onAppear { viewModel.refreshPermissions() }
@@ -195,6 +199,145 @@ private struct DictationSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+private struct StylesSettingsTab: View {
+    @ObservedObject var settings: TextSettings
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Melhorar o texto com IA", isOn: $settings.cleanupEnabled)
+            } footer: {
+                Text("Tira hesitações e repetições e corrige a pontuação, mantendo as tuas palavras.")
+            }
+
+            Section("Estilo por tipo") {
+                ForEach(AppCategory.allCases) { category in
+                    Picker(category.displayName, selection: Binding(
+                        get: { settings.style(for: category) },
+                        set: { settings.setStyle($0, for: category) }
+                    )) {
+                        ForEach(TextStyle.allCases) { style in
+                            Text(style.displayName).tag(style)
+                        }
+                    }
+                }
+            }
+            .disabled(!settings.cleanupEnabled)
+
+            Section {
+                if settings.recentTargets.isEmpty {
+                    Text("Os sítios onde ditares aparecem aqui.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(settings.recentTargets) { target in
+                    TargetCategoryRow(target: target, settings: settings)
+                }
+            } header: {
+                Text("Apps e sites")
+            } footer: {
+                Text("O tipo decide o estilo usado nesse sítio.")
+            }
+        }
+        .formStyle(.grouped)
+    }
+}
+
+private struct TargetCategoryRow: View {
+    let target: RecentTarget
+    @ObservedObject var settings: TextSettings
+
+    var body: some View {
+        Picker(selection: Binding(
+            get: { settings.targetCategories[target.key] },
+            set: { settings.setCategory($0, forKey: target.key) }
+        )) {
+            Text("Automático (\(StyleCatalog.builtInCategory(forKey: target.key).displayName))")
+                .tag(AppCategory?.none)
+            Divider()
+            ForEach(AppCategory.allCases) { category in
+                Text(category.displayName).tag(AppCategory?.some(category))
+            }
+        } label: {
+            Label {
+                Text(target.name)
+            } icon: {
+                TargetIcon(key: target.key)
+            }
+        }
+    }
+}
+
+private struct TargetIcon: View {
+    let key: String
+
+    var body: some View {
+        if key.hasPrefix("app:"),
+           let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: String(key.dropFirst(4))) {
+            Image(nsImage: NSWorkspace.shared.icon(forFile: url.path))
+                .resizable()
+                .frame(width: 16, height: 16)
+        } else {
+            Image(systemName: "globe")
+        }
+    }
+}
+
+private struct DictionarySettingsTab: View {
+    @ObservedObject var settings: TextSettings
+    @State private var newWord = ""
+    @State private var rejection: String?
+
+    var body: some View {
+        Form {
+            Section {
+                HStack {
+                    TextField("Nova palavra", text: $newWord)
+                        .onSubmit(add)
+                    Button("Adicionar", action: add)
+                        .disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty)
+                }
+                if let rejection {
+                    Text(rejection)
+                        .font(.callout)
+                        .foregroundStyle(.red)
+                }
+            } footer: {
+                Text("Nomes, marcas e siglas que devem ser escritos exatamente assim. Ajuda a transcrição e a limpeza.")
+            }
+
+            Section("Palavras (\(settings.dictionary.count))") {
+                if settings.dictionary.isEmpty {
+                    Text("O dicionário está vazio.")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(settings.dictionary, id: \.self) { word in
+                    HStack {
+                        Text(word)
+                        Spacer()
+                        Button {
+                            settings.removeWord(word)
+                        } label: {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .accessibilityLabel("Remover \(word)")
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func add() {
+        if let refused = settings.addWord(newWord) {
+            rejection = refused.message
+        } else {
+            rejection = nil
+            newWord = ""
+        }
     }
 }
 
