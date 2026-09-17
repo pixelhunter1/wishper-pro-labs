@@ -117,8 +117,10 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
+    let textSettings = TextSettings()
+
     private let keychain = KeychainService()
-    private let translationClient = OpenAITranslationClient()
+    private let textProcessor = OpenAITextProcessor()
     private let autoPaster = AutoPaster()
     private let hotkeyMonitor = GlobalHotkeyMonitor()
     private let soundCuePlayer = SoundCuePlayer()
@@ -132,6 +134,7 @@ final class VoicePasteViewModel: ObservableObject {
     private var isHandsFree = false
     private var hotkeyPressedAt = Date.distantPast
     private var targetIsSelf = false
+    private var pendingTarget: Task<DictationTarget, Never>?
 
     init() {
         if let savedKey = keychain.loadAPIKey(), !savedKey.isEmpty {
@@ -365,10 +368,12 @@ final class VoicePasteViewModel: ObservableObject {
         }
 
         let frontmost = NSWorkspace.shared.frontmostApplication
+        let target = FocusDetector.capture()
         let session = DictationSession(options: .init(
             apiKey: apiKey,
             languages: selectedSourceLanguage.isoCode.map { [$0] } ?? [],
-            prompt: transcriptionPrompt()
+            prompt: transcriptionPrompt(),
+            keywords: textSettings.dictionary
         ))
         session.onUpdate = { [weak self] text, level in
             self?.liveTranscript = text
@@ -388,6 +393,13 @@ final class VoicePasteViewModel: ObservableObject {
         targetAppName = frontmost?.localizedName
         targetAppIcon = frontmost?.icon
         targetIsSelf = frontmost?.processIdentifier == ProcessInfo.processInfo.processIdentifier
+        pendingTarget = target
+        // In a browser the site's host replaces the app name once it is known.
+        Task { [weak self] in
+            let resolved = await target.value
+            guard let self, self.session === session else { return }
+            self.targetAppName = resolved.displayName
+        }
         liveTranscript = ""
         audioLevel = 0
         setPhase(.listening)
@@ -398,6 +410,7 @@ final class VoicePasteViewModel: ObservableObject {
 
     private func stopDictation() {
         guard phase == .listening, let session else { return }
+        let target = pendingTarget
         endListening()
         soundCuePlayer.playStopCue()
         setPhase(.finalizing)
@@ -405,7 +418,8 @@ final class VoicePasteViewModel: ObservableObject {
         Task { [weak self] in
             do {
                 let text = try await session.finish()
-                await self?.deliver(text, usedFallback: session.usedFallback)
+                let resolvedTarget = await target?.value
+                await self?.deliver(text, usedFallback: session.usedFallback, target: resolvedTarget)
             } catch {
                 self?.fail(error.localizedDescription)
             }
@@ -421,7 +435,7 @@ final class VoicePasteViewModel: ObservableObject {
         audioLevel = 0
     }
 
-    private func deliver(_ transcript: String, usedFallback: Bool) async {
+    private func deliver(_ transcript: String, usedFallback: Bool, target: DictationTarget?) async {
         var text = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else {
             fail("Não foi possível gerar texto da gravação.")
@@ -429,16 +443,27 @@ final class VoicePasteViewModel: ObservableObject {
         }
 
         var warning: String?
-        if translationEnabled, let apiKey = activeAPIKey {
+        let category = target.map { textSettings.category(forKey: $0.key) } ?? .other
+        if let target {
+            textSettings.recordTarget(key: target.key, name: target.displayName)
+        }
+        let style = textSettings.effectiveStyle(for: category)
+        let targetLanguage = translationEnabled ? selectedTargetLanguage.translationName : nil
+        if OpenAITextProcessor.needsRequest(style: style, translating: targetLanguage != nil),
+           let apiKey = activeAPIKey {
+            let request = OpenAITextProcessor.Request(
+                text: text,
+                style: style,
+                category: category,
+                appName: target?.appName ?? "App",
+                dictionary: textSettings.dictionary,
+                sourceLanguage: selectedSourceLanguage == .auto ? nil : selectedSourceLanguage.translationName,
+                targetLanguage: targetLanguage
+            )
             do {
-                text = try await translationClient.translate(
-                    text: text,
-                    sourceLanguage: selectedSourceLanguage.translationName,
-                    targetLanguage: selectedTargetLanguage.translationName,
-                    apiKey: apiKey
-                )
+                text = try await textProcessor.process(request, apiKey: apiKey)
             } catch {
-                warning = "Tradução falhou: \(error.localizedDescription)"
+                warning = OpenAITextProcessor.warning(for: error, translating: targetLanguage != nil)
             }
         }
         lastTranscript = text
