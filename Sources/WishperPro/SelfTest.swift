@@ -75,6 +75,7 @@ enum SelfTest {
         checkFallbackRequest()
         checkWordOverlap()
         checkStyleCatalog()
+        checkAddressHosts()
         checkPersonalDictionary()
         checkTextSettings()
     }
@@ -490,6 +491,19 @@ enum SelfTest {
         check(reloaded.effectiveStyle(for: .messages) == .unchanged, "definições de texto: IA desligada = Sem alterações")
         reloaded.setCategory(nil, forKey: "site:example.com")
         check(reloaded.category(forKey: "site:example.com") == .other, "definições de texto: Automático volta ao catálogo")
+    }
+
+    private static func checkAddressHosts() {
+        func host(_ address: String) -> String? {
+            FocusDetector.host(fromAddress: address)
+        }
+        check(host("https://www.mail.google.com/mail/u/0/#inbox") == "mail.google.com", "endereço: domínio sem www")
+        check(host("docs.google.com/document/d/1") == "docs.google.com", "endereço: sem esquema")
+        check(host("chrome://newtab") == nil, "endereço: páginas internas ignoradas")
+        check(host("about:blank") == nil, "endereço: about:blank ignorado")
+        check(host("receitas de bacalhau") == nil, "endereço: texto de pesquisa ignorado")
+        check(host("localhost:3000") == nil, "endereço: sem domínio com ponto")
+        check(host("") == nil, "endereço: vazio ignorado")
     }
 
     private static func checkWordOverlap() {
