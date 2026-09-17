@@ -281,6 +281,7 @@ private struct TargetIcon: View {
                 .frame(width: 16, height: 16)
         } else {
             Image(systemName: "globe")
+                .frame(width: 16, height: 16)
         }
     }
 }
@@ -294,7 +295,10 @@ private struct DictionarySettingsTab: View {
         Form {
             Section {
                 HStack {
-                    TextField("Nova palavra", text: $newWord)
+                    TextField("Nova palavra", text: Binding(
+                        get: { newWord },
+                        set: { newWord = $0; rejection = nil }
+                    ))
                         .onSubmit(add)
                     Button("Adicionar", action: add)
                         .disabled(newWord.trimmingCharacters(in: .whitespaces).isEmpty)

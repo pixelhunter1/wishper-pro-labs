@@ -189,10 +189,11 @@ Sites, pelo domínio:
 ## Dicionário
 
 - Lista de palavras e expressões (nomes, marcas, siglas). Vem com "Wishper Pro".
-- Validação ao acrescentar (função pura que devolve a lista nova ou o motivo da recusa): tira `<`, `>`, CR e LF e
-  os espaços nas pontas; recusa entradas vazias, repetidas (sem distinguir maiúsculas), com mais de 60 caracteres
-  ou além de 100 entradas (limites nossos). Ao ler das preferências, aplica-se a mesma limpeza e as entradas
-  inválidas são ignoradas.
+- Validação ao acrescentar (função pura que devolve a lista nova ou o motivo da recusa): trata `<`, `>` e qualquer
+  espaço em branco como separadores e junta as partes com um único espaço (mais estrito do que só tirar marcas e
+  aparar as pontas: garante sempre uma entrada numa só linha); recusa entradas vazias, repetidas (sem distinguir
+  maiúsculas), com mais de 60 caracteres ou além de 100 entradas (limites nossos). Ao ler das preferências,
+  aplica-se a mesma limpeza e as entradas inválidas são ignoradas.
 - Usado em três sítios: `keywords` ao vivo, `keywords[]` no plano B e a regra "Spell these terms exactly" da
   limpeza (também com tradução).
 

@@ -559,8 +559,9 @@ enum SelfTest {
         check(body?["model"] as? String == "gpt-5.6-luna", "limpeza: modelo gpt-5.6-luna")
         check(body?["reasoning_effort"] as? String == "none", "limpeza: reasoning_effort none")
         check(
-            body?["temperature"] == nil && body?["presence_penalty"] == nil && body?["frequency_penalty"] == nil,
-            "limpeza: sem temperature nem penalizações"
+            body?["temperature"] == nil && body?["presence_penalty"] == nil && body?["frequency_penalty"] == nil
+                && body?["service_tier"] == nil,
+            "limpeza: sem temperature, penalizações nem service_tier"
         )
         check(
             format?["type"] as? String == "json_schema" && schema?["strict"] as? Bool == true,
@@ -623,6 +624,13 @@ enum SelfTest {
             OpenAITextProcessor.warning(for: TextProcessingError.rejectedOutput, translating: true)
                 == "Tradução falhou: resposta inesperada da IA.",
             "limpeza: aviso quando a tradução falha"
+        )
+        let networkWarning = OpenAITextProcessor.warning(for: URLError(.notConnectedToInternet), translating: false)
+        let networkPrefix = "Colado sem limpeza: "
+        check(
+            networkWarning.hasPrefix(networkPrefix)
+                && (networkWarning.dropFirst(networkPrefix.count).first?.isLowercase ?? false),
+            "limpeza: aviso de rede começa em minúscula"
         )
     }
 

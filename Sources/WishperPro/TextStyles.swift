@@ -300,6 +300,8 @@ final class TextSettings: ObservableObject {
     func recordTarget(key: String, name: String) {
         var targets = recentTargets.filter { $0.key != key }
         targets.insert(RecentTarget(key: key, name: name), at: 0)
+        // Never evicts a place with a chosen type, so `targetCategories.keys` stays a subset of
+        // `recentTargets`'s keys — every chosen type stays visible in "Apps e sites".
         while targets.count > Self.maxRecentTargets,
               let index = targets.lastIndex(where: { targetCategories[$0.key] == nil }) {
             targets.remove(at: index)

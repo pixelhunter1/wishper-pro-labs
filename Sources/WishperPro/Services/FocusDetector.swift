@@ -58,21 +58,47 @@ enum FocusDetector {
         return host
     }
 
-    /// Safari exposes the page URL on its web area; Chromium and Firefox show it in the address field.
+    /// Safari exposes the page URL on its web area; Chromium and Firefox keep it in a toolbar text field.
+    /// One breadth-first pass looks for both, bounded by `maxVisitedElements` lookups and `searchBudget`.
     private nonisolated static func pageAddress(pid: pid_t, family: StyleCatalog.BrowserFamily) -> String? {
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, messagingTimeout)
         guard let window = element(app, kAXFocusedWindowAttribute) else { return nil }
-        switch family {
-        case .safari:
-            guard let webArea = firstDescendant(of: window, role: "AXWebArea"),
-                  let url = attribute(webArea, kAXURLAttribute)
-            else { return nil }
-            return (url as? URL)?.absoluteString
-        case .chromium, .firefox:
-            guard let field = firstDescendant(of: window, role: kAXTextFieldRole) else { return nil }
-            return attribute(field, kAXValueAttribute) as? String
+        let deadline = Date().addingTimeInterval(searchBudget)
+        var queue = [window]
+        var lookups = 0
+        var addressField: AXUIElement?
+        while !queue.isEmpty, Date() < deadline {
+            let current = queue.removeFirst()
+            guard let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] else { continue }
+            for child in children {
+                let role = attribute(child, kAXRoleAttribute) as? String
+                lookups += 1
+                if lookups >= maxVisitedElements || Date() >= deadline {
+                    return value(of: addressField)
+                }
+                switch role {
+                case "AXWebArea":
+                    // The page's own URL is the most reliable source; web content itself is not entered.
+                    if let url = attribute(child, kAXURLAttribute) as? URL {
+                        return url.absoluteString
+                    }
+                case kAXTextFieldRole:
+                    if addressField == nil, family != .safari {
+                        addressField = child
+                    }
+                    queue.append(child)
+                default:
+                    queue.append(child)
+                }
+            }
         }
+        return value(of: addressField)
+    }
+
+    private nonisolated static func value(of field: AXUIElement?) -> String? {
+        guard let field else { return nil }
+        return attribute(field, kAXValueAttribute) as? String
     }
 
     private nonisolated static func attribute(_ element: AXUIElement, _ name: String) -> AnyObject? {
@@ -84,34 +110,5 @@ enum FocusDetector {
     private nonisolated static func element(_ parent: AXUIElement, _ name: String) -> AXUIElement? {
         guard let value = attribute(parent, name), CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return unsafeDowncast(value, to: AXUIElement.self)
-    }
-
-    /// Breadth-first, so browser chrome (address bar) is found before page content; web content is not entered.
-    /// Stops after `maxVisitedElements` Accessibility role lookups or `searchBudget` seconds.
-    private nonisolated static func firstDescendant(of root: AXUIElement, role wanted: String) -> AXUIElement? {
-        let deadline = Date().addingTimeInterval(searchBudget)
-        var queue = [root]
-        var lookups = 0
-        while !queue.isEmpty {
-            if Date() >= deadline {
-                return nil
-            }
-            let current = queue.removeFirst()
-            guard let children = attribute(current, kAXChildrenAttribute) as? [AXUIElement] else { continue }
-            for child in children {
-                let role = attribute(child, kAXRoleAttribute) as? String
-                lookups += 1
-                if role == wanted {
-                    return child
-                }
-                if lookups >= maxVisitedElements || Date() >= deadline {
-                    return nil
-                }
-                if role != "AXWebArea" {
-                    queue.append(child)
-                }
-            }
-        }
-        return nil
     }
 }

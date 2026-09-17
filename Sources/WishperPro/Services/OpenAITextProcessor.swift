@@ -73,7 +73,11 @@ struct OpenAITextProcessor {
     }
 
     static func warning(for error: Error, translating: Bool) -> String {
-        let reason = error.localizedDescription
+        var reason = error.localizedDescription
+        // TextProcessingError's own descriptions are already lowercase; other errors (network, system) are not.
+        if !(error is TextProcessingError) {
+            reason = reason.prefix(1).lowercased() + reason.dropFirst()
+        }
         return translating ? "Tradução falhou: \(reason)" : "Colado sem limpeza: \(reason)"
     }
 
@@ -114,7 +118,7 @@ struct OpenAITextProcessor {
             lines += [
                 "",
                 "Style: \(request.style.instruction)",
-                "The text will be pasted into \(request.appName) (\(request.category.promptName)).",
+                "The text will be pasted into \(PersonalDictionary.clean(request.appName)) (\(request.category.promptName)).",
             ]
         }
         lines += ["", #"Reply with JSON: {"text": "<the resulting text>"}"#]

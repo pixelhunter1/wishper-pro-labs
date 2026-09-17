@@ -305,6 +305,7 @@ final class VoicePasteViewModel: ObservableObject {
         guard phase == .listening else { return }
         session?.cancel()
         session = nil
+        pendingTarget = nil
         endListening()
         soundCuePlayer.playStopCue()
         setPhase(.idle)
@@ -411,6 +412,7 @@ final class VoicePasteViewModel: ObservableObject {
     private func stopDictation() {
         guard phase == .listening, let session else { return }
         let target = pendingTarget
+        pendingTarget = nil
         endListening()
         soundCuePlayer.playStopCue()
         setPhase(.finalizing)
@@ -449,21 +451,24 @@ final class VoicePasteViewModel: ObservableObject {
         }
         let style = textSettings.effectiveStyle(for: category)
         let targetLanguage = translationEnabled ? selectedTargetLanguage.translationName : nil
-        if OpenAITextProcessor.needsRequest(style: style, translating: targetLanguage != nil),
-           let apiKey = activeAPIKey {
-            let request = OpenAITextProcessor.Request(
-                text: text,
-                style: style,
-                category: category,
-                appName: target?.appName ?? "App",
-                dictionary: textSettings.dictionary,
-                sourceLanguage: selectedSourceLanguage == .auto ? nil : selectedSourceLanguage.translationName,
-                targetLanguage: targetLanguage
-            )
-            do {
-                text = try await textProcessor.process(request, apiKey: apiKey)
-            } catch {
-                warning = OpenAITextProcessor.warning(for: error, translating: targetLanguage != nil)
+        if OpenAITextProcessor.needsRequest(style: style, translating: targetLanguage != nil) {
+            if let apiKey = activeAPIKey {
+                let request = OpenAITextProcessor.Request(
+                    text: text,
+                    style: style,
+                    category: category,
+                    appName: target?.appName ?? "App",
+                    dictionary: textSettings.dictionary,
+                    sourceLanguage: selectedSourceLanguage == .auto ? nil : selectedSourceLanguage.translationName,
+                    targetLanguage: targetLanguage
+                )
+                do {
+                    text = try await textProcessor.process(request, apiKey: apiKey)
+                } catch {
+                    warning = OpenAITextProcessor.warning(for: error, translating: targetLanguage != nil)
+                }
+            } else {
+                warning = targetLanguage != nil ? "Tradução falhou: falta a API key." : "Colado sem limpeza: falta a API key."
             }
         }
         lastTranscript = text
