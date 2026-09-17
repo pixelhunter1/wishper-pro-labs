@@ -74,6 +74,8 @@ enum SelfTest {
         checkClipboardRestore()
         checkFallbackRequest()
         checkWordOverlap()
+        checkStyleCatalog()
+        checkPersonalDictionary()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -397,6 +399,56 @@ enum SelfTest {
         check(text.contains("name=\"languages[]\"\r\n\r\npt\r\n"), "plano B: languages[] no multipart")
         check(!text.contains("name=\"language\""), "plano B: sem o campo antigo language")
         check(text.contains("filename=\"audio.wav\"\r\nContent-Type: audio/wav"), "plano B: ficheiro WAV")
+    }
+
+    private static func checkStyleCatalog() {
+        func category(_ bundleID: String, _ host: String? = nil, overrides: [String: AppCategory] = [:]) -> AppCategory {
+            StyleCatalog.category(forKey: StyleCatalog.key(bundleID: bundleID, host: host), overrides: overrides)
+        }
+        check(category("com.tinyspeck.slackmacgap") == .messages, "tipo: Slack é Mensagens")
+        check(category("com.apple.mail") == .email, "tipo: Mail é Email")
+        check(category("com.anthropic.claudefordesktop") == .aiChat, "tipo: Claude é Chat de IA")
+        check(category("com.apple.Notes") == .documents, "tipo: Notas é Documentos e notas")
+        check(category("com.apple.Terminal") == .other, "tipo: app desconhecida é Outros")
+        check(category("com.google.Chrome", "mail.google.com") == .email, "tipo: Gmail no browser é Email")
+        check(category("com.google.Chrome", "app.slack.com") == .messages, "tipo: subdomínio de slack.com é Mensagens")
+        check(category("com.google.Chrome", "google.com") == .other, "tipo: google.com não é Gmail")
+        check(category("com.google.Chrome", "xmail.google.com") == .other, "tipo: só conta o domínio inteiro")
+        check(category("com.google.Chrome") == .other, "tipo: browser sem domínio é Outros")
+        check(StyleCatalog.key(bundleID: "com.apple.mail", host: nil) == "app:com.apple.mail", "tipo: chave de app")
+        check(StyleCatalog.key(bundleID: "com.apple.Safari", host: "claude.ai") == "site:claude.ai", "tipo: chave de site")
+        check(
+            category("com.apple.mail", overrides: ["app:com.apple.mail": .messages]) == .messages,
+            "tipo: a escolha do utilizador vem primeiro"
+        )
+        check(StyleCatalog.browsers["com.apple.Safari"] == .safari, "tipo: Safari é um browser")
+        check(
+            AppCategory.email.defaultStyle == .formal && AppCategory.messages.defaultStyle == .casual
+                && AppCategory.aiChat.defaultStyle == .natural,
+            "estilo: predefinições por tipo"
+        )
+    }
+
+    private static func checkPersonalDictionary() {
+        func added(_ word: String, to entries: [String]) -> [String]? {
+            try? PersonalDictionary.adding(word, to: entries).get()
+        }
+        func refusal(_ word: String, to entries: [String]) -> PersonalDictionary.Rejection? {
+            if case .failure(let rejection) = PersonalDictionary.adding(word, to: entries) {
+                return rejection
+            }
+            return nil
+        }
+        check(PersonalDictionary.clean("  Wishper\nPro <b> ") == "Wishper Pro b", "dicionário: tira quebras de linha, < e >")
+        check(added("  Rui ", to: ["Wishper Pro"]) == ["Wishper Pro", "Rui"], "dicionário: acrescenta sem espaços nas pontas")
+        check(refusal("   ", to: []) == .empty, "dicionário: recusa entrada vazia")
+        check(refusal("wishper pro", to: ["Wishper Pro"]) == .duplicate, "dicionário: recusa repetida (maiúsculas)")
+        check(refusal(String(repeating: "a", count: 61), to: []) == .tooLong, "dicionário: recusa mais de 60 caracteres")
+        check(refusal("Nova", to: (1...100).map { "p\($0)" }) == .full, "dicionário: recusa além de 100 entradas")
+        check(
+            PersonalDictionary.sanitized(["Rui", "", "rui", "<>", "Ana\n"]) == ["Rui", "Ana"],
+            "dicionário: ao ler, ignora inválidas e repetidas"
+        )
     }
 
     private static func checkWordOverlap() {
