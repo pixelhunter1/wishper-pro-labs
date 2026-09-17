@@ -78,6 +78,7 @@ enum SelfTest {
         checkAddressHosts()
         checkPersonalDictionary()
         checkTextSettings()
+        checkKeywords()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -143,10 +144,11 @@ enum SelfTest {
                 wav: WAV.make(pcm16: microphone.recordedAudio),
                 apiKey: apiKey,
                 languages: ["pt"],
+                keywords: ["Wishper Pro"],
                 prompt: nil
             )
             print("    plano B: \(fallback)")
-            checkTranscript(fallback, "plano B: gpt-transcribe com languages[]")
+            checkTranscript(fallback, "plano B: gpt-transcribe com languages[] e keywords[]")
         } catch {
             check(false, "sessão: \(error.localizedDescription)")
         }
@@ -178,6 +180,7 @@ enum SelfTest {
         let started = Date()
         let deltas = LockedList<(TimeInterval, String)>()
         var configuration = OpenAIRealtimeTranscriber.Configuration(languages: ["pt"])
+        configuration.keywords = ["Wishper Pro"]
         if let delay = ProcessInfo.processInfo.environment["WISHPER_SELFTEST_DELAY"] {
             configuration.delay = delay
         }
@@ -198,6 +201,7 @@ enum SelfTest {
             let received = deltas.all
             print("    \(received.count) deltas; primeiro após \(format(received.first?.0 ?? -1)) s")
             print("    final \(format(Date().timeIntervalSince(committedAt))) s após o commit: \(text)")
+            print("    keywords: \"Wishper\" \(text.contains("Wishper") ? "reconhecido" : "não reconhecido")")
             check(!received.isEmpty, "ao vivo: chegaram deltas enquanto se falava")
             checkTranscript(text, "ao vivo: texto final reconhecível")
         } catch {
@@ -504,6 +508,34 @@ enum SelfTest {
         check(host("receitas de bacalhau") == nil, "endereço: texto de pesquisa ignorado")
         check(host("localhost:3000") == nil, "endereço: sem domínio com ponto")
         check(host("") == nil, "endereço: vazio ignorado")
+    }
+
+    private static func checkKeywords() {
+        var configuration = OpenAIRealtimeTranscriber.Configuration()
+        check(transcriptionSettings(configuration)?["keywords"] == nil, "keywords: não se envia sem palavras")
+        configuration.keywords = ["Wishper Pro", "Rui"]
+        check(
+            transcriptionSettings(configuration)?["keywords"] as? [String] == ["Wishper Pro", "Rui"],
+            "keywords: lista no session.update"
+        )
+        let fields = OpenAITranscriptionClient.formFields(
+            model: "gpt-transcribe",
+            languages: ["pt"],
+            keywords: ["Wishper Pro"],
+            prompt: nil
+        )
+        check(
+            fields.filter { $0.name == "keywords[]" }.map(\.value) == ["Wishper Pro"],
+            "keywords: keywords[] no plano B"
+        )
+        let bare = OpenAITranscriptionClient.formFields(model: "gpt-transcribe", languages: ["pt"], prompt: nil)
+        check(!bare.contains { $0.name == "keywords[]" }, "keywords: plano B sem palavras não envia keywords[]")
+    }
+
+    private static func transcriptionSettings(_ configuration: OpenAIRealtimeTranscriber.Configuration) -> [String: Any]? {
+        let message = jsonObject(OpenAIRealtimeTranscriber.sessionUpdateJSON(configuration))
+        let audio = (message?["session"] as? [String: Any])?["audio"] as? [String: Any]
+        return (audio?["input"] as? [String: Any])?["transcription"] as? [String: Any]
     }
 
     private static func checkWordOverlap() {

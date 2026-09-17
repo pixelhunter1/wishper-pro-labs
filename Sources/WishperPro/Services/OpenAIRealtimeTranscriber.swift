@@ -45,6 +45,8 @@ actor OpenAIRealtimeTranscriber {
         var prompt: String?
         // Calibration knob: "minimal" ≈ 0.7 s to first text, "low" ≈ 1.2 s, higher values trade speed for stability.
         var delay = "low"
+        /// Personal dictionary: literal terms (no `<`, `>` or line breaks) the model should recognise.
+        var keywords: [String] = []
     }
 
     static let endpoint = URL(string: "wss://api.openai.com/v1/realtime?intent=transcription")!
@@ -137,6 +139,9 @@ actor OpenAIRealtimeTranscriber {
         }
         if let prompt = configuration.prompt, !prompt.isEmpty {
             transcription["prompt"] = prompt
+        }
+        if !configuration.keywords.isEmpty {
+            transcription["keywords"] = configuration.keywords
         }
         let input: [String: Any] = [
             "format": ["type": "audio/pcm", "rate": 24_000] as [String: Any],

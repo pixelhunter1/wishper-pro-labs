@@ -17,6 +17,7 @@ final class DictationSession {
         var apiKey: String
         var languages: [String]
         var prompt: String?
+        var keywords: [String] = []
     }
 
     /// A 100 ms chunk above this level counts as speech (the threshold the old meter used).
@@ -85,6 +86,7 @@ final class DictationSession {
                 wav: WAV.make(pcm16: microphone.recordedAudio),
                 apiKey: options.apiKey,
                 languages: options.languages,
+                keywords: options.keywords,
                 prompt: options.prompt
             )
         }
@@ -103,7 +105,7 @@ final class DictationSession {
         let (deltas, deltaSink) = AsyncStream.makeStream(of: String.self)
         let transcriber = OpenAIRealtimeTranscriber(
             apiKey: options.apiKey,
-            configuration: .init(languages: options.languages, prompt: options.prompt),
+            configuration: .init(languages: options.languages, prompt: options.prompt, keywords: options.keywords),
             onDelta: { deltaSink.yield($0) }
         )
         self.transcriber = transcriber

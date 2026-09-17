@@ -8,6 +8,7 @@ struct OpenAITranscriptionClient {
         wav: Data,
         apiKey: String,
         languages: [String],
+        keywords: [String] = [],
         prompt: String?,
         model: String = "gpt-transcribe",
         timeoutSeconds: TimeInterval = 30
@@ -21,7 +22,7 @@ struct OpenAITranscriptionClient {
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         let body = Self.multipartBody(
             boundary: boundary,
-            fields: Self.formFields(model: model, languages: languages, prompt: prompt),
+            fields: Self.formFields(model: model, languages: languages, keywords: keywords, prompt: prompt),
             wav: wav
         )
 
@@ -43,10 +44,17 @@ struct OpenAITranscriptionClient {
         return try JSONDecoder().decode(TranscriptionPayload.self, from: data).text
     }
 
-    /// `languages[]` replaces the legacy `language` field for `gpt-transcribe`; never send both.
-    static func formFields(model: String, languages: [String], prompt: String?) -> [(name: String, value: String)] {
+    /// Arrays repeat the field once per entry. `languages[]` replaces the legacy `language` field for
+    /// `gpt-transcribe`; never send both.
+    static func formFields(
+        model: String,
+        languages: [String],
+        keywords: [String] = [],
+        prompt: String?
+    ) -> [(name: String, value: String)] {
         var fields: [(name: String, value: String)] = [("model", model), ("response_format", "json")]
         fields += languages.map { ("languages[]", $0) }
+        fields += keywords.map { ("keywords[]", $0) }
         if let prompt, !prompt.isEmpty {
             fields.append(("prompt", prompt))
         }
