@@ -69,6 +69,7 @@ enum SelfTest {
         checkBrandMark()
         checkHotkeyDecisions()
         checkAudioConversion()
+        checkInputSwitch()
         checkRealtimeProtocol()
         checkClipboardRestore()
         checkFallbackRequest()
@@ -288,6 +289,36 @@ enum SelfTest {
         check(stream.recordedAudio.count == total, "conversor: gravação completa guardada")
         let level = received.dropFirst().first?.1 ?? 0
         check(level > 0.5 && level < 0.65, "nível: seno a -20 dBFS ≈ 0,58 (obtido \(format(level)))")
+    }
+
+    /// Bluetooth headsets change format as the microphone starts (44.1 → 16 kHz); the recording must carry on.
+    private static func checkInputSwitch() {
+        let before = AVAudioFormat(standardFormatWithSampleRate: 44_100, channels: 1)!
+        let after = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        let stream = MicrophoneStream()
+        let chunks = LockedList<Data>()
+        do {
+            try stream.prepare(inputFormat: before) { chunk, _ in chunks.append(chunk) }
+            for part in 0..<5 {
+                stream.ingest(sineBuffer(format: before, frames: 4_410, startFrame: part * 4_410))
+            }
+            try stream.switchInput(to: after)
+            // A late buffer from the old tap is dropped instead of being converted at the wrong rate.
+            stream.ingest(sineBuffer(format: before, frames: 4_410, startFrame: 0))
+            for part in 0..<5 {
+                stream.ingest(sineBuffer(format: after, frames: 1_600, startFrame: part * 1_600))
+            }
+        } catch {
+            check(false, "troca de formato: preparar os conversores")
+            return
+        }
+        stream.stop()
+        let total = chunks.all.reduce(0) { $0 + $1.count }
+        check(
+            abs(total - PCM16.bytesPerSecond) <= PCM16.bytesPerSecond / 50,
+            "troca de formato: 0,5 s a 44,1 kHz + 0,5 s a 16 kHz ≈ 48 000 bytes (obtido \(total))"
+        )
+        check(stream.recordedAudio.count == total, "troca de formato: a gravação continua depois da troca")
     }
 
     private static func checkRealtimeProtocol() {

@@ -205,8 +205,10 @@ Máquina de estados `DictationPhase`: `idle → listening → finalizing → don
 
 Notas:
 - Um novo ditado durante `finalizing` é ignorado (como hoje).
-- Se o dispositivo de áudio mudar a meio (`AVAudioEngineConfigurationChange`, ex.: AirPods ligam-se), trata-se
-  como "Fim" com o áudio que já existe.
+- Se o formato do dispositivo de áudio mudar (`AVAudioEngineConfigurationChange`), o microfone reinicia com o
+  formato novo e o ditado continua. Acontece logo ao ligar o microfone em auscultadores Bluetooth, que passam ao
+  perfil de chamada (ex.: 44,1 → 16 kHz), e quando se ligam uns AirPods a meio. Só se não conseguir reiniciar
+  (ex.: o dispositivo desapareceu) é que se trata como "Fim" com o áudio que já existe.
 - O menu, a bolha e as Definições leem o mesmo estado do `VoicePasteViewModel`.
 
 ## Componentes

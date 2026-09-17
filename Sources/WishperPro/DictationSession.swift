@@ -24,7 +24,7 @@ final class DictationSession {
 
     /// Accumulated live text and the latest level, on the main actor.
     var onUpdate: (@MainActor (_ liveText: String, _ level: Double) -> Void)?
-    /// The input device changed mid-dictation; the owner should call `finish()`.
+    /// The microphone stopped and couldn't restart (e.g. the input device went away); the owner should call `finish()`.
     var onInterruption: (@MainActor () -> Void)?
 
     private(set) var heardSpeech = false

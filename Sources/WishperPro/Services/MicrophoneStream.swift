@@ -55,11 +55,14 @@ final class PCMConverter {
     private let converter: AVAudioConverter
 
     init?(from inputFormat: AVAudioFormat) {
-        guard let converter = AVAudioConverter(from: inputFormat, to: PCM16.format) else { return nil }
+        guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
+              let converter = AVAudioConverter(from: inputFormat, to: PCM16.format)
+        else { return nil }
         converter.downmix = true
         self.converter = converter
     }
 
+    /// A buffer in another format (a late one from before a device switch) makes the converter fail: it is dropped.
     func convert(_ buffer: AVAudioPCMBuffer) -> Data {
         let ratio = PCM16.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 32
@@ -120,46 +123,52 @@ final class MicrophoneStream: @unchecked Sendable {
         locked { recording }
     }
 
-    /// Starts the microphone. `onInterruption` fires when the input device changes (e.g. AirPods connect).
+    /// Starts the microphone. `onInterruption` fires when the microphone can't carry on after a device change.
     func start(onChunk: @escaping ChunkHandler, onInterruption: @escaping @Sendable () -> Void) throws {
         let engine = AVAudioEngine()
-        let input = engine.inputNode
-        let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0, format.channelCount > 0 else {
-            throw MicrophoneStreamError.unavailable
-        }
+        let format = engine.inputNode.outputFormat(forBus: 0)
         try prepare(inputFormat: format, onChunk: onChunk)
-        input.installTap(onBus: 0, bufferSize: 2_048, format: format) { [weak self] buffer, _ in
-            self?.ingest(buffer)
-        }
-        engine.prepare()
-        do {
-            try engine.start()
-        } catch {
-            input.removeTap(onBus: 0)
-            throw MicrophoneStreamError.unavailable
-        }
+        self.engine = engine
+        // Bluetooth headsets switch to their call profile (e.g. 44.1 → 16 kHz) just after the microphone starts,
+        // and the engine stops itself on any format change, so it restarts with the new format.
         configurationObserver = NotificationCenter.default.addObserver(
             forName: .AVAudioEngineConfigurationChange,
             object: engine,
             queue: .main
-        ) { _ in
-            onInterruption()
+        ) { [weak self] _ in
+            // Restart after the engine has finished posting, not inside its notification.
+            DispatchQueue.main.async {
+                do {
+                    try self?.restart()
+                } catch {
+                    onInterruption()
+                }
+            }
         }
-        self.engine = engine
+        do {
+            try run(engine, format: format)
+        } catch {
+            stop()
+            throw error
+        }
     }
 
     /// Sets up conversion without the engine; `start` uses it, and the self-test uses it to feed audio files.
     func prepare(inputFormat: AVAudioFormat, onChunk: @escaping ChunkHandler) throws {
-        guard let converter = PCMConverter(from: inputFormat) else {
-            throw MicrophoneStreamError.unavailable
-        }
+        try switchInput(to: inputFormat)
         locked {
-            self.converter = converter
             self.onChunk = onChunk
             pending = Data()
             recording = Data()
         }
+    }
+
+    /// Converts from `format` from now on, keeping what was already recorded.
+    func switchInput(to format: AVAudioFormat) throws {
+        guard let converter = PCMConverter(from: format) else {
+            throw MicrophoneStreamError.unavailable
+        }
+        locked { self.converter = converter }
     }
 
     func ingest(_ buffer: AVAudioPCMBuffer) {
@@ -202,6 +211,30 @@ final class MicrophoneStream: @unchecked Sendable {
         if !tail.isEmpty {
             handler?(tail, PCM16.level(of: tail))
         }
+    }
+
+    private func run(_ engine: AVAudioEngine, format: AVAudioFormat) throws {
+        let input = engine.inputNode
+        input.installTap(onBus: 0, bufferSize: 2_048, format: format) { [weak self] buffer, _ in
+            self?.ingest(buffer)
+        }
+        engine.prepare()
+        do {
+            try engine.start()
+        } catch {
+            input.removeTap(onBus: 0)
+            throw MicrophoneStreamError.unavailable
+        }
+    }
+
+    /// Picks up the device's new format after a configuration change. A stopped stream stays stopped.
+    private func restart() throws {
+        guard let engine else { return }
+        let input = engine.inputNode
+        input.removeTap(onBus: 0)
+        let format = input.outputFormat(forBus: 0)
+        try switchInput(to: format)
+        try run(engine, format: format)
     }
 
     private func locked<T>(_ body: () throws -> T) rethrows -> T {
