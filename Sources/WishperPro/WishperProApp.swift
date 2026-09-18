@@ -12,8 +12,18 @@ struct WishperProApp: App {
         }
         .menuBarExtraStyle(.menu)
 
-        Settings {
+        // A WindowGroup, not Settings or Window: on macOS 26 only a WindowGroup window gets Finder's
+        // one-row toolbar and a sidebar whose corners are concentric with the window's. Opening it
+        // by value keeps it to one window.
+        WindowGroup("Definições", id: SettingsOpener.windowID, for: String.self) { _ in
             SettingsView(viewModel: appDelegate.viewModel)
+        }
+        .windowResizability(.contentSize)
+        .commandsRemoved()
+        .commands {
+            CommandGroup(replacing: .appSettings) {
+                OpenSettingsButton()
+            }
         }
     }
 }
@@ -37,18 +47,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
-/// Opens the SwiftUI Settings window from anywhere (menu, first launch, Dock) and brings it to the front.
-/// Triggers the app menu's ⌘, item, which SwiftUI creates even for LSUIElement apps (verified on macOS 26).
+/// Opens the Settings window from anywhere (menu, first launch, Dock) and brings it to the front.
+/// Triggers the app menu's ⌘, item (OpenSettingsButton), which exists even for LSUIElement apps (verified on macOS 26).
 @MainActor
 enum SettingsOpener {
+    static let windowID = "settings"
+
     static func open() {
         NSApp.activate(ignoringOtherApps: true)
         if let appMenu = NSApp.mainMenu?.items.first?.submenu,
            let index = appMenu.items.firstIndex(where: { $0.keyEquivalent == "," }) {
             appMenu.performActionForItem(at: index)
-        } else {
-            NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
         }
+    }
+}
+
+/// The app menu's ⌘, item, which SettingsOpener triggers from outside SwiftUI.
+private struct OpenSettingsButton: View {
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        Button("Definições…") { openWindow(id: SettingsOpener.windowID, value: SettingsOpener.windowID) }
+            .keyboardShortcut(",", modifiers: .command)
     }
 }
 

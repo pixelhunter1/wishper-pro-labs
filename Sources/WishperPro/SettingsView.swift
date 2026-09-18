@@ -25,31 +25,139 @@ extension Bundle {
 
 struct SettingsView: View {
     @ObservedObject var viewModel: VoicePasteViewModel
+    @State private var pane = SettingsPane.general
+    @FocusState private var sidebarFocused: Bool
 
     var body: some View {
-        TabView {
-            GeneralSettingsTab(viewModel: viewModel)
-                .tabItem { Label("Geral", systemImage: "gearshape") }
-            DictationSettingsTab(viewModel: viewModel)
-                .tabItem { Label("Ditado", systemImage: "mic") }
-            StylesSettingsTab(settings: viewModel.textSettings)
-                .tabItem { Label("Estilos", systemImage: "textformat") }
-            DictionarySettingsTab(settings: viewModel.textSettings)
-                .tabItem { Label("Dicionário", systemImage: "character.book.closed") }
-            TranslationSettingsTab(viewModel: viewModel)
-                .tabItem { Label("Tradução", systemImage: "globe") }
-            BubbleSettingsTab(viewModel: viewModel)
-                .tabItem { Label("Bolha", systemImage: "capsule") }
+        NavigationSplitView {
+            // Ignores nil so a click can't leave the sidebar without a selection.
+            List(selection: Binding(get: { pane }, set: { if let new = $0 { pane = new } })) {
+                row(.general)
+                row(.dictation)
+                row(.bubble)
+                Section("Texto") {
+                    row(.styles)
+                    row(.dictionary)
+                    row(.translation)
+                }
+            }
+            .navigationSplitViewColumnWidth(220)
+            .hidingSidebarToggle()
+            // The window opens with the sidebar focused, not the API key field.
+            .focused($sidebarFocused)
+            .defaultFocus($sidebarFocused, true)
+        } detail: {
+            detail
+                .navigationTitle(pane.title)
         }
-        .frame(width: 540, height: 500)
+        .toolbar {
+            // With no items there is no toolbar, and without a toolbar the sidebar stops below
+            // the title bar instead of running to the top like Finder's. This empty item keeps it.
+            if #available(macOS 26.0, *) {
+                ToolbarItem { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
+                    .sharedBackgroundVisibility(.hidden)
+            } else {
+                ToolbarItem { Color.clear.frame(width: 1, height: 1).accessibilityHidden(true) }
+            }
+        }
+        // The detail column keeps the 540 points of the old tabbed window: the bubble preview needs them.
+        .frame(width: 760, height: 520)
         .onAppear { viewModel.refreshPermissions() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.refreshPermissions()
         }
     }
+
+    private func row(_ pane: SettingsPane) -> some View {
+        // Finder's selection: a faint pill 10 points in from the sidebar's edges, with the icon and
+        // text in the accent colour.
+        let isSelected = pane == self.pane
+        let tint = isSelected ? Color.accentColor : Color.primary
+        return Label {
+            Text(pane.title).foregroundStyle(tint)
+        } icon: {
+            Image(systemName: pane.systemImage).foregroundStyle(tint)
+        }
+        .background(NoSystemSelectionHighlight())
+        .listRowBackground(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(.quaternary)
+                .padding(.horizontal, 10)
+                .opacity(isSelected ? 1 : 0)
+        )
+        .tag(pane)
+    }
+
+    @ViewBuilder
+    private var detail: some View {
+        switch pane {
+        case .general: GeneralPane(viewModel: viewModel)
+        case .dictation: DictationPane(viewModel: viewModel)
+        case .bubble: BubblePane(viewModel: viewModel)
+        case .styles: StylesPane(settings: viewModel.textSettings)
+        case .dictionary: DictionaryPane(settings: viewModel.textSettings)
+        case .translation: TranslationPane(viewModel: viewModel)
+        }
+    }
 }
 
-private struct GeneralSettingsTab: View {
+private enum SettingsPane {
+    case general, dictation, bubble, styles, dictionary, translation
+
+    var title: String {
+        switch self {
+        case .general: return "Geral"
+        case .dictation: return "Ditado"
+        case .bubble: return "Bolha"
+        case .styles: return "Estilos"
+        case .dictionary: return "Dicionário"
+        case .translation: return "Tradução"
+        }
+    }
+
+    var systemImage: String {
+        switch self {
+        case .general: return "gearshape"
+        case .dictation: return "mic"
+        case .bubble: return "text.bubble"
+        case .styles: return "wand.and.stars"
+        case .dictionary: return "character.book.closed"
+        case .translation: return "translate"
+        }
+    }
+}
+
+private extension View {
+    /// Keeps the sidebar always visible, like System Settings. macOS 13 keeps the toggle.
+    @ViewBuilder
+    func hidingSidebarToggle() -> some View {
+        if #available(macOS 14.0, *) {
+            toolbar(removing: .sidebarToggle)
+        } else {
+            self
+        }
+    }
+}
+
+/// Turns off the list's own selection highlight (a solid grey or accent pill) so the row can draw
+/// Finder's faint one. Selection itself, arrow keys and VoiceOver work as before.
+private struct NoSystemSelectionHighlight: NSViewRepresentable {
+    final class Probe: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            var view = superview
+            while let current = view, !(current is NSTableView) {
+                view = current.superview
+            }
+            (view as? NSTableView)?.selectionHighlightStyle = .none
+        }
+    }
+
+    func makeNSView(context: Context) -> Probe { Probe() }
+    func updateNSView(_ nsView: Probe, context: Context) {}
+}
+
+private struct GeneralPane: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
     var body: some View {
@@ -152,7 +260,7 @@ private struct PermissionRow: View {
     }
 }
 
-private struct DictationSettingsTab: View {
+private struct DictationPane: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
     var body: some View {
@@ -202,7 +310,7 @@ private struct DictationSettingsTab: View {
     }
 }
 
-private struct StylesSettingsTab: View {
+private struct StylesPane: View {
     @ObservedObject var settings: TextSettings
 
     var body: some View {
@@ -286,7 +394,7 @@ private struct TargetIcon: View {
     }
 }
 
-private struct DictionarySettingsTab: View {
+private struct DictionaryPane: View {
     @ObservedObject var settings: TextSettings
     @State private var newWord = ""
     @State private var rejection: String?
@@ -345,7 +453,7 @@ private struct DictionarySettingsTab: View {
     }
 }
 
-private struct TranslationSettingsTab: View {
+private struct TranslationPane: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
     var body: some View {
@@ -359,14 +467,14 @@ private struct TranslationSettingsTab: View {
                 }
                 .disabled(!viewModel.translationEnabled)
             } footer: {
-                Text("A língua de origem é a língua do ditado (separador Ditado).")
+                Text("A língua de origem é a língua do ditado, que escolhes em Ditado.")
             }
         }
         .formStyle(.grouped)
     }
 }
 
-private struct BubbleSettingsTab: View {
+private struct BubblePane: View {
     @ObservedObject var viewModel: VoicePasteViewModel
 
     var body: some View {

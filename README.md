@@ -31,7 +31,7 @@ Hold a hotkey, speak, and the words land in whatever app you are in: cleaned up,
 - **Never loses a dictation.** If the cleanup call fails or times out, the transcript is pasted anyway with a warning. If the live connection drops, the recording is transcribed by `gpt-transcribe` instead.
 - **Your clipboard survives.** What you had copied is put back after the paste, and the pasted text is marked as transient so clipboard managers skip it.
 - **Push-to-talk or hands-free.** Hold the hotkey to talk, or tap it once to keep recording and again to stop. `Esc` cancels.
-- **A menu bar app.** No Dock icon by default, native Settings, follows light and dark mode, and supports VoiceOver, Reduce Motion, Reduce Transparency and Increase Contrast.
+- **A menu bar app.** No Dock icon by default, native Settings with a Finder-style sidebar, follows light and dark mode, and supports VoiceOver, Reduce Motion, Reduce Transparency and Increase Contrast.
 - **No backend.** Audio never touches the disk, the API key lives in the Keychain, and settings live in UserDefaults.
 
 ## Screenshots
@@ -114,14 +114,16 @@ Settings open by themselves while anything is missing:
 
 ## Settings
 
-| Tab | What it holds |
+Open them with **⌘,** or from the menu bar. The sidebar lists these pages; the last three sit under **Texto**.
+
+| Page | What it holds |
 |---|---|
 | **Geral** | API key, permissions, start at login, Dock icon |
 | **Ditado** | Hotkey and behaviour (automatic, hold, toggle), dictation language, auto-paste, clipboard restore |
+| **Bolha** | Bubble style (live text, compact, hidden), position, and a preview |
 | **Estilos** | AI cleanup on/off, a style per app type (AI chats, messages, email, documents, other), and the type of each app or site you have dictated into |
 | **Dicionário** | Your names, brands and acronyms |
 | **Tradução** | Translate after transcribing, and into which language |
-| **Bolha** | Bubble style (live text, compact, hidden), position, and a preview |
 
 ## Models and cost
 
@@ -157,7 +159,7 @@ Roughly $0.02 for a minute of dictation, billed to your own OpenAI account.
 ```text
 Sources/WishperPro/
   SelfTest.swift              # @main + --selftest checks
-  WishperProApp.swift         # menu bar app + Settings scene
+  WishperProApp.swift         # menu bar app + Settings window
   SettingsView.swift
   VoicePasteViewModel.swift
   TextStyles.swift            # app types, styles, catalog, dictionary, settings

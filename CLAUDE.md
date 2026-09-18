@@ -28,8 +28,8 @@ Não há target de testes: as verificações vivem em `SelfTest.swift` (`--selft
 App macOS de barra de menus em Swift 6.2 / SwiftUI, compilada com Swift Package Manager (sem dependências externas). Target: macOS 13+ (APIs do macOS 14/26 atrás de `#available`).
 
 - `SelfTest.swift` — ponto de entrada (`@main`): `--selftest` corre as verificações; senão arranca `WishperProApp`.
-- `WishperProApp.swift` — `MenuBarExtra` (menu nativo) + `Settings`; `AppDelegate` (política de ativação, bolha, primeiro arranque); `SettingsOpener`.
-- `SettingsView.swift` — Definições (⌘,): Geral, Ditado, Estilos, Dicionário, Tradução, Bolha (`Form` `.grouped`).
+- `WishperProApp.swift` — `MenuBarExtra` (menu nativo) + janela das Definições (`WindowGroup` aberto por valor, uma só janela; ⌘, via `CommandGroup`); `AppDelegate` (política de ativação, bolha, primeiro arranque); `SettingsOpener`.
+- `SettingsView.swift` — Definições com barra lateral estilo Finder (`NavigationSplitView`): Geral, Ditado, Bolha; Texto: Estilos, Dicionário, Tradução (`Form` `.grouped`). No macOS 26 só um `WindowGroup` com barra de ferramentas dá a barra lateral até ao topo com cantos concêntricos (`Settings` e `Window` não).
 - `VoicePasteViewModel.swift` — fonte de verdade: `DictationPhase`, definições (`DefaultsKey`), atalho, entrega do texto.
 - `TextStyles.swift` — tipos de app (`AppCategory`), estilos (`TextStyle`), catálogo de apps e sites (`StyleCatalog`), dicionário (`PersonalDictionary`) e `TextSettings` (definições de texto em UserDefaults).
 - `DictationSession.swift` — um ditado: microfone → `gpt-live-transcribe` → texto final; plano B `gpt-transcribe` com o áudio em memória.
