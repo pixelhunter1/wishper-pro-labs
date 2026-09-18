@@ -41,11 +41,13 @@ struct SettingsView: View {
                     row(.translation)
                 }
             }
-            .navigationSplitViewColumnWidth(220)
             .hidingSidebarToggle()
-            // The window opens with the sidebar focused, not the API key field.
+            // After hidingSidebarToggle: set before it, the width is ignored and the sidebar opens at 140.
+            .navigationSplitViewColumnWidth(220)
+            // The window opens with the sidebar focused, not the API key field. Async: on appear the
+            // window isn't key yet.
             .focused($sidebarFocused)
-            .defaultFocus($sidebarFocused, true)
+            .onAppear { DispatchQueue.main.async { sidebarFocused = true } }
         } detail: {
             detail
                 .navigationTitle(pane.title)
@@ -61,7 +63,8 @@ struct SettingsView: View {
             }
         }
         // The detail column keeps the 540 points of the old tabbed window: the bubble preview needs them.
-        .frame(width: 760, height: 520)
+        // 570 high fits all of Geral without scrolling.
+        .frame(width: 760, height: 570)
         .onAppear { viewModel.refreshPermissions() }
         .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
             viewModel.refreshPermissions()
