@@ -110,26 +110,32 @@ final class RecordingWriter {
         appendFrame(frame, at: time)
     }
 
-    /// Converts to 48 kHz mono (a new converter when the format changes) and times the voice by counting samples, so
-    /// blocks never overlap or leave holes. After a gap of more than 50 ms the count restarts at the block's time; a
-    /// block more than 50 ms behind the count is dropped (the microphone's clock ran fast).
-    func appendVoice(_ buffer: AVAudioPCMBuffer, at time: CMTime) {
-        guard let voice, let start, time >= start else { return }
+    /// Converts to 48 kHz mono (a new converter when the format changes) and times the voice by counting samples (see
+    /// `voiceTime`). Returns when the block was written, in seconds since time zero, or nil when it was dropped.
+    @discardableResult
+    func appendVoice(_ buffer: AVAudioPCMBuffer, at time: CMTime) -> TimeInterval? {
+        guard let voice, let start, time >= start else { return nil }
         if voiceConverter?.inputFormat != buffer.format {
             voiceConverter = PCMConverter(from: buffer.format, to: Self.voiceFormat)
         }
-        guard let converted = voiceConverter?.convertBuffer(buffer), converted.frameLength > 0 else { return }
-        var presentation = nextVoiceTime ?? time
-        if presentation < time - Self.voiceDrift {
-            presentation = time
-        } else if presentation > time + Self.voiceDrift {
-            return
-        }
-        guard voice.isReadyForMoreMediaData,
+        guard let converted = voiceConverter?.convertBuffer(buffer), converted.frameLength > 0,
+              let presentation = Self.voiceTime(next: nextVoiceTime, block: time),
+              voice.isReadyForMoreMediaData,
               let sample = Self.sampleBuffer(converted, at: presentation),
               voice.append(sample)
-        else { return }
+        else { return nil }
         nextVoiceTime = presentation + CMTime(value: CMTimeValue(converted.frameLength), timescale: 48_000)
+        return (presentation - start).seconds
+    }
+
+    /// Where a voice block goes: right after the previous one, so blocks never overlap or leave holes. A block more
+    /// than 50 ms after that point restarts the count at its own time (the microphone skipped); one more than 50 ms
+    /// before it is dropped (the microphone's clock ran fast).
+    static func voiceTime(next: CMTime?, block: CMTime) -> CMTime? {
+        let presentation = next ?? block
+        if presentation < block - voiceDrift { return block }
+        if presentation > block + voiceDrift { return nil }
+        return presentation
     }
 
     /// ScreenCaptureKit's blocks go in as they come: the stream is asked for a fixed 48 kHz stereo format.

@@ -88,6 +88,7 @@ enum SelfTest {
         checkRecordingConfiguration()
         checkRecordingErrors()
         checkRecordingPhases()
+        checkVoiceTiming()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -896,6 +897,20 @@ enum SelfTest {
         CVPixelBufferCreate(kCFAllocatorDefault, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
         guard let buffer else { throw CocoaError(.featureUnsupported) }
         return buffer
+    }
+
+    /// The voice's timing rule: each block follows the one before; a gap restarts the count at the block, and a block
+    /// more than 50 ms early is dropped.
+    private static func checkVoiceTiming() {
+        func time(_ milliseconds: Int64) -> CMTime { CMTime(value: milliseconds, timescale: 1_000) }
+        check(RecordingWriter.voiceTime(next: nil, block: time(500)) == time(500), "voz: o primeiro bloco fica no seu tempo")
+        check(
+            RecordingWriter.voiceTime(next: time(1_000), block: time(1_030)) == time(1_000)
+                && RecordingWriter.voiceTime(next: time(1_000), block: time(970)) == time(1_000),
+            "voz: um bloco a menos de 50 ms segue o anterior"
+        )
+        check(RecordingWriter.voiceTime(next: time(1_000), block: time(1_300)) == time(1_300), "voz: uma falha de 300 ms recomeça no bloco")
+        check(RecordingWriter.voiceTime(next: time(1_000), block: time(900)) == nil, "voz: um bloco 100 ms adiantado é descartado")
     }
 
     private static func checkWordOverlap() {
