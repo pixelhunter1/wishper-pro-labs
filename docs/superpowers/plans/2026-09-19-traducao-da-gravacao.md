@@ -1913,11 +1913,12 @@ Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 **Ficheiros:**
 - Modify: `Sources/WishperPro/Services/TranslatedVideoExporter.swift` (acrescentar o exportador e o `MacSoundReader`)
 - Modify: `Sources/WishperPro/Services/MicrophoneStream.swift` (`PendingBuffer` deixa de ser `private`)
-- Modify: `Sources/WishperPro/Services/RecordingWriter.swift` (`RecordingFile.translatedURL`)
+- Modify: `Sources/WishperPro/Services/RecordingWriter.swift` (`RecordingFile.translatedURL`, com o nome livre partilhado com `url(for:in:)`)
+- Modify: `Sources/WishperPro/Services/ScreenRecorder.swift` (`pcmBuffer` deixa de ser `private`, para ler o som do Mac)
 - Modify: `Sources/WishperPro/SelfTest.swift` (`checkTranslatedFileName`, `checkTranslatedExport`, `audioLevels`)
 
 **Interfaces:**
-- Consome: `VoicePlacement`, `SubtitleCues`, `SubtitleStyle`, `TranslatedVideoError` (Tarefa 5), `TranslatedPhrase` (Tarefa 6), `PCM16`, `PendingBuffer`, `writeRecording` e `syntheticVoice` (SelfTest).
+- Consome: `VoicePlacement`, `SubtitleCues`, `SubtitleStyle`, `TranslatedVideoError` (Tarefa 5), `TranslatedPhrase` (Tarefa 6), `PCM16`, `PendingBuffer`, `ScreenRecorder.pcmBuffer`, `writeRecording` e `syntheticVoice` (SelfTest).
 - Produz: `TranslatedVideoExporter.export(original:phrases:subtitles:to:progress:) async throws` (`@available(macOS 15, *)`, `progress: @escaping @Sendable (Double) -> Void` com predefinição); `TranslatedVideoExporter.fileType = .mp4`; `TranslatedVideoExporter.samples(of:rate:) -> [Float]?`; `RecordingFile.translatedURL(for original: URL, language: SupportedLanguage) -> URL`.
 
 Confirmado no protótipo: a faixa `tx3g` passa para o `.mp4` na exportação passthrough (0,5 s para 37 s de vídeo); com as legendas na imagem, 10,5 s para 2160×2268 com 37 s. O `CATextLayer` não desenha texto numa exportação, por isso cada legenda é uma imagem desenhada com `CGContext`.
@@ -2072,6 +2073,11 @@ final class PendingBuffer: @unchecked Sendable {
 Em `Sources/WishperPro/Services/RecordingWriter.swift`, substituir:
 
 ```swift
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pt_PT")
+        formatter.dateFormat = "yyyy-MM-dd 'às' HH.mm.ss"
+        let base = "Gravação \(formatter.string(from: date))"
+        var url = folder.appendingPathComponent("\(base).mov")
         var number = 2
         while FileManager.default.fileExists(atPath: url.path) {
             url = folder.appendingPathComponent("\(base) \(number).mov")
@@ -2083,25 +2089,52 @@ Em `Sources/WishperPro/Services/RecordingWriter.swift`, substituir:
 por:
 
 ```swift
-        var number = 2
-        while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appendingPathComponent("\(base) \(number).mov")
-            number += 1
-        }
-        return url
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "pt_PT")
+        formatter.dateFormat = "yyyy-MM-dd 'às' HH.mm.ss"
+        return available("Gravação \(formatter.string(from: date))", pathExtension: "mov", in: folder)
     }
 
     /// "Gravação … (Inglês).mp4" next to the original, with " 2", " 3"… when the name is taken.
     static func translatedURL(for original: URL, language: SupportedLanguage) -> URL {
-        let folder = original.deletingLastPathComponent()
         let base = "\(original.deletingPathExtension().lastPathComponent) (\(language.displayName))"
-        var url = folder.appendingPathComponent("\(base).mp4")
+        return available(base, pathExtension: "mp4", in: original.deletingLastPathComponent())
+    }
+
+    /// `base.ext` in `folder`, or `base 2.ext`, `base 3.ext`… when the name is taken.
+    private static func available(_ base: String, pathExtension: String, in folder: URL) -> URL {
+        var url = folder.appendingPathComponent("\(base).\(pathExtension)")
         var number = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appendingPathComponent("\(base) \(number).mp4")
+            url = folder.appendingPathComponent("\(base) \(number).\(pathExtension)")
             number += 1
         }
         return url
+```
+
+Em `Sources/WishperPro/Services/ScreenRecorder.swift`, substituir:
+
+```swift
+        return sample.imageBuffer
+    }
+
+    private static func pcmBuffer(_ sample: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        guard let description = sample.formatDescription,
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+              let format = AVAudioFormat(streamDescription: streamDescription)
+```
+
+por:
+
+```swift
+        return sample.imageBuffer
+    }
+
+    /// A sample buffer's audio as a PCM buffer in its own format (also reads the Mac's sound for the translated video).
+    static func pcmBuffer(_ sample: CMSampleBuffer) -> AVAudioPCMBuffer? {
+        guard let description = sample.formatDescription,
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+              let format = AVAudioFormat(streamDescription: streamDescription)
 ```
 
 No fim de `Sources/WishperPro/Services/TranslatedVideoExporter.swift` (a seguir a `TranslatedVideoError`), acrescentar:
@@ -2528,7 +2561,7 @@ private final class MacSoundReader {
     /// Writes the next `count` frames (silence after the end).
     func fill(_ leftOut: UnsafeMutablePointer<Float>, _ rightOut: UnsafeMutablePointer<Float>, count: Int) {
         while left.count < count, !isDone {
-            guard let sample = output.copyNextSampleBuffer(), let buffer = Self.pcmBuffer(sample),
+            guard let sample = output.copyNextSampleBuffer(), let buffer = ScreenRecorder.pcmBuffer(sample),
                   let channels = buffer.floatChannelData
             else {
                 isDone = true
@@ -2546,23 +2579,6 @@ private final class MacSoundReader {
         left.removeFirst(available)
         right.removeFirst(available)
     }
-
-    private static func pcmBuffer(_ sample: CMSampleBuffer) -> AVAudioPCMBuffer? {
-        guard let description = sample.formatDescription,
-              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
-              let format = AVAudioFormat(streamDescription: streamDescription)
-        else { return nil }
-        let frames = AVAudioFrameCount(sample.numSamples)
-        guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
-        buffer.frameLength = frames
-        guard CMSampleBufferCopyPCMDataIntoAudioBufferList(
-            sample,
-            at: 0,
-            frameCount: Int32(frames),
-            into: buffer.mutableAudioBufferList
-        ) == noErr else { return nil }
-        return buffer
-    }
 }
 ```
 
@@ -2576,7 +2592,7 @@ Esperado: sem erros nem avisos novos; `== Tudo OK ==` com 192 linhas `ok`
 - [ ] **Passo 5: Commit**
 
 ```bash
-git add Sources/WishperPro/Services/TranslatedVideoExporter.swift Sources/WishperPro/Services/MicrophoneStream.swift Sources/WishperPro/Services/RecordingWriter.swift Sources/WishperPro/SelfTest.swift
+git add Sources/WishperPro/Services/TranslatedVideoExporter.swift Sources/WishperPro/Services/MicrophoneStream.swift Sources/WishperPro/Services/RecordingWriter.swift Sources/WishperPro/Services/ScreenRecorder.swift Sources/WishperPro/SelfTest.swift
 git commit -m "Export the translated video with the mixed voice and subtitles
 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
