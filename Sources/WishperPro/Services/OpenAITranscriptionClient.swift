@@ -85,7 +85,7 @@ private struct OpenAIErrorPayload: Decodable {
     let error: OpenAIError
 }
 
-private enum OpenAITranscriptionError: LocalizedError {
+enum OpenAITranscriptionError: LocalizedError {
     case emptyAudio
     case invalidServerResponse
     case timeout

@@ -99,6 +99,7 @@ enum SelfTest {
     private static func runAsyncOfflineChecks() async {
         await checkLiveReaderClosed()
         await checkRecordingWriter()
+        await checkTranslator()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -1123,6 +1124,66 @@ enum SelfTest {
             "legendas: o tempo da frase reparte-se sem buracos"
         )
         check(SubtitleCues.make([("One.", 1, 1.3), ("Two.", 1.8, 3)])[0].end == 1.8, "legendas: uma legenda não entra na seguinte")
+    }
+
+    /// The translator with fake steps: phrases in order with their context, one that fails during the recording and is
+    /// read at the end, and a refused key that stops all further calls.
+    private static func checkTranslator() async {
+        let pattern: [(seconds: Double, speech: Bool)] = [(1, false), (2, true), (2, false), (2, true), (2, false), (2, true), (1.5, false)]
+        let audio = syntheticVoice(pattern, speech: -45, noise: -70)
+        let room = syntheticVoice([(3, false)], speech: -45, noise: -70)
+        func feed(_ translator: RecordingTranslator) {
+            translator.add(room, at: nil)
+            var offset = 0
+            while offset < audio.count {
+                let end = min(offset + 1_008, audio.count)
+                translator.add(audio.subdata(in: offset..<end), at: Double(offset / 2) / PCM16.sampleRate)
+                offset = end
+            }
+        }
+        let contexts = LockedList<String>()
+        let readAttempts = LockedList<String>()
+        let translator = RecordingTranslator(steps: TranslationSteps(
+            transcribe: { phrase in "frase \(Int(phrase.start.rounded()))" },
+            translate: { text, context in
+                contexts.append("\(text) ← \(context.map(\.source).joined(separator: ", "))")
+                return text.replacingOccurrences(of: "frase", with: "phrase")
+            },
+            read: { text in
+                readAttempts.append(text)
+                // The second phrase fails all three tries during the recording, then works at the end.
+                if text == "phrase 5", readAttempts.all.filter({ $0 == text }).count <= 3 {
+                    throw URLError(.timedOut)
+                }
+                return Data(count: 48_000)
+            },
+            close: {}
+        ))
+        await translator.start()
+        feed(translator)
+        let result = await translator.finish()
+        check(result.phrases.map(\.text) == ["phrase 1", "phrase 5", "phrase 9"], "tradutor: 3 frases pela ordem (\(result.phrases.map(\.text)))")
+        check(contexts.all.last == "frase 9 ← frase 1, frase 5", "tradutor: cada frase leva as anteriores como contexto")
+        check(result.failed == 0 && readAttempts.all.filter { $0 == "phrase 5" }.count == 4, "tradutor: a frase que falhou é lida na última volta")
+
+        let transcriptions = LockedList<Int>()
+        let refused = RecordingTranslator(steps: TranslationSteps(
+            transcribe: { _ in
+                transcriptions.append(1)
+                throw OpenAITranscriptionError.api(statusCode: 401, message: "Incorrect API key")
+            },
+            translate: { text, _ in text },
+            read: { _ in Data() },
+            close: {}
+        ))
+        await refused.start()
+        feed(refused)
+        let refusal = await refused.finish()
+        check(
+            refusal.failed == 3 && refusal.phrases.isEmpty && transcriptions.all.count == 1
+                && refusal.firstError.map(RecordingTranslator.isRefusal) == true,
+            "tradutor: uma key recusada não volta a ser usada (\(transcriptions.all.count) chamada)"
+        )
     }
 
     private static func checkWordOverlap() {
