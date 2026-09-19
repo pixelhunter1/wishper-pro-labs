@@ -91,6 +91,7 @@ enum SelfTest {
         checkVoiceTiming()
         checkPhraseDetector()
         checkNarrationRequest()
+        checkLiveReaderProtocol()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -108,6 +109,7 @@ enum SelfTest {
         await checkInvalidKey(audioURL: audioURL)
         await checkTextProcessor(apiKey: apiKey)
         await checkNarration(apiKey: apiKey)
+        await checkLiveReader(apiKey: apiKey)
     }
 
     /// A rejected key must surface as "A API key é inválida." without trying the fallback.
@@ -1022,6 +1024,56 @@ enum SelfTest {
             check(text.contains("Xcode") && text.lowercased().contains("install"), "narração: traduz para inglês com o Dicionário (\(text))")
         } catch {
             check(false, "narração: traduzir uma frase (\(error.localizedDescription))")
+        }
+    }
+
+    private static func checkLiveReaderProtocol() {
+        let start = jsonObject(GPTLiveReader.startJSON(voice: "meridian"))
+        let session = start?["session"] as? [String: Any]
+        let audio = session?["audio"] as? [String: Any]
+        check(
+            start?["type"] as? String == "session.start"
+                && session?["model"] as? String == "gpt-live-1"
+                && (session?["instructions"] as? String)?.contains("word for word") == true
+                && (audio?["output"] as? [String: Any])?["voice"] as? String == "meridian"
+                && (audio?["format"] as? [String: Any])?["rate"] as? Int == 24_000,
+            "GPT-Live: session.start com o modelo, o narrador, a voz e PCM 24 kHz"
+        )
+        let commentary = jsonObject(GPTLiveReader.commentaryJSON("Diz \"olá\""))
+        check(
+            commentary?["type"] as? String == "session.commentary.append"
+                && commentary?["content"] as? String == "Diz \"olá\""
+                && commentary?["delegation_id"] is NSNull,
+            "GPT-Live: o texto segue como commentary"
+        )
+        check(GPTLiveReader.wordsKept("It takes 3.5 seconds.", in: "it takes 3.5 seconds") == 1, "GPT-Live: as mesmas palavras sem pontuação são 100%")
+        check(GPTLiveReader.wordsKept("Olá, está bem?", in: "Ola esta") < GPTLiveReader.minimumKept, "GPT-Live: uma palavra em falta conta")
+        let silence = Data(count: 4_800)
+        let speech = syntheticVoice([(0.1, true)], speech: -20, noise: -90)
+        check(
+            GPTLiveReader.trimmed([silence, silence, speech, speech, silence, silence, silence]).count == 4 * 4_800,
+            "GPT-Live: corta o silêncio à volta, com um bloco de margem"
+        )
+        check(
+            LiveVoice.all.count == 22 && LiveVoice.stored("nova") == LiveVoice.defaultID && LiveVoice.stored("gleam") == "gleam",
+            "GPT-Live: 22 vozes, e uma voz que já não existe volta à predefinida"
+        )
+    }
+
+    private static func checkLiveReader(apiKey: String) async {
+        let text = "This is a test of the Wishper Pro voice."
+        let reader = GPTLiveReader(apiKey: apiKey, voice: LiveVoice.defaultID)
+        do {
+            let reading = try await reader.read(text)
+            await reader.close()
+            let seconds = Double(reading.audio.count / 2) / PCM16.sampleRate
+            check(
+                GPTLiveReader.wordsKept(text, in: reading.transcript) >= GPTLiveReader.minimumKept && seconds > 1,
+                "GPT-Live: lê a frase palavra por palavra (\(format(seconds)) s: \(reading.transcript))"
+            )
+        } catch {
+            await reader.close()
+            check(false, "GPT-Live: ler uma frase (\(error.localizedDescription))")
         }
     }
 
