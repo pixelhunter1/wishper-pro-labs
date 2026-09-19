@@ -90,6 +90,7 @@ enum SelfTest {
         checkRecordingPhases()
         checkVoiceTiming()
         checkPhraseDetector()
+        checkNarrationRequest()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -106,6 +107,7 @@ enum SelfTest {
         await checkDictationSession(audioURL: audioURL, apiKey: apiKey)
         await checkInvalidKey(audioURL: audioURL)
         await checkTextProcessor(apiKey: apiKey)
+        await checkNarration(apiKey: apiKey)
     }
 
     /// A rejected key must surface as "A API key é inválida." without trying the fallback.
@@ -975,6 +977,52 @@ enum SelfTest {
             }
         }
         return samples.withUnsafeBufferPointer { Data(buffer: $0) }
+    }
+
+    private static func checkNarrationRequest() {
+        var request = OpenAITextProcessor.Request(
+            text: "Olá, hoje vou instalar o Xcode.",
+            style: .unchanged,
+            category: .other,
+            appName: "",
+            dictionary: ["Xcode"],
+            sourceLanguage: "Português de Portugal",
+            targetLanguage: "Inglês",
+            narration: [.init(source: "Boas <tarde>", translation: "Good\nafternoon")]
+        )
+        let instructions = OpenAITextProcessor.instructions(for: request)
+        check(
+            instructions.contains("narration of a screen recording into Inglês")
+                && instructions.contains("Spell these terms exactly as written: Xcode.")
+                && instructions.contains("- Boas tarde → Good afternoon")
+                && instructions.contains("reply with an empty text"),
+            "narração: instruções com a língua, o Dicionário e as frases anteriores"
+        )
+        check(OpenAITextProcessor.accepts("", for: request), "narração: uma hesitação pode voltar vazia")
+        request.narration = nil
+        check(
+            !OpenAITextProcessor.instructions(for: request).contains("screen recording") && !OpenAITextProcessor.accepts("", for: request),
+            "narração: o ditado fica igual e não aceita texto vazio"
+        )
+    }
+
+    private static func checkNarration(apiKey: String) async {
+        let request = OpenAITextProcessor.Request(
+            text: "Hoje vou mostrar como se instala o Xcode.",
+            style: .unchanged,
+            category: .other,
+            appName: "",
+            dictionary: ["Xcode"],
+            sourceLanguage: "Português de Portugal",
+            targetLanguage: "Inglês",
+            narration: []
+        )
+        do {
+            let text = try await OpenAITextProcessor().process(request, apiKey: apiKey)
+            check(text.contains("Xcode") && text.lowercased().contains("install"), "narração: traduz para inglês com o Dicionário (\(text))")
+        } catch {
+            check(false, "narração: traduzir uma frase (\(error.localizedDescription))")
+        }
     }
 
     private static func checkWordOverlap() {
