@@ -31,6 +31,7 @@ App macOS de barra de menus em Swift 6.2 / SwiftUI, compilada com Swift Package 
 - `WishperProApp.swift` — `MenuBarExtra` (menu nativo) + janela das Definições (`WindowGroup` aberto por valor, uma só janela; ⌘, via `CommandGroup`); `AppDelegate` (política de ativação, bolha, primeiro arranque); `SettingsOpener`.
 - `SettingsView.swift` — Definições com barra lateral estilo Finder (`NavigationSplitView`): Geral, Ditado, Bolha; Texto: Estilos, Dicionário, Tradução (`Form` `.grouped`). No macOS 26 só um `WindowGroup` com barra de ferramentas dá a barra lateral até ao topo com cantos concêntricos (`Settings` e `Window` não).
 - `VoicePasteViewModel.swift` — fonte de verdade: `DictationPhase`, definições (`DefaultsKey`), atalho, entrega do texto.
+- `RecordingController.swift` — gravação de ecrã a partir do menu (macOS 15+): seletor do sistema → contagem 3-2-1 → gravação → Finder; `RecordingPhase`, microfone e som do Mac em UserDefaults; guarda a gravação antes de sair.
 - `TextStyles.swift` — tipos de app (`AppCategory`), estilos (`TextStyle`), catálogo de apps e sites (`StyleCatalog`), dicionário (`PersonalDictionary`) e `TextSettings` (definições de texto em UserDefaults).
 - `DictationSession.swift` — um ditado: microfone → `gpt-live-transcribe` → texto final; plano B `gpt-transcribe` com o áudio em memória.
 - `VoiceBubbleView.swift` + `Services/FloatingBubbleController.swift` — bolha (Texto ao vivo / Compacta / Oculta; 3 posições; Liquid Glass no macOS 26).
@@ -38,9 +39,11 @@ App macOS de barra de menus em Swift 6.2 / SwiftUI, compilada com Swift Package 
 
 Pipeline: atalho → `FocusDetector` (app ou site → tipo → estilo) + `DictationSession.start()` (microfone + WebSocket com as `keywords` do dicionário) → texto ao vivo na bolha → `finish()` (commit) → `OpenAITextProcessor` (limpeza, estilo e tradução numa chamada, quando preciso) → colar (repõe o clipboard) → "Colado · App". Se a limpeza falhar, cola o texto transcrito com um aviso.
 
+Gravação: menu → `SCContentSharingPicker` (sem permissão de Gravação de Ecrã; a app exclui-se, por isso a bolha não aparece no vídeo) → `ScreenRecorder` arranca o stream (o microfone aquece durante a contagem de 3 s) → `RecordingWriter` escreve a partir do fim da contagem → `~/Movies/Wishper Pro/Gravação … .mov` → Finder. Voz e som do Mac em faixas separadas, no relógio do vídeo (base da tradução, parte 2).
+
 ### Services (Sources/WishperPro/Services/)
 
-- `MicrophoneStream` — `AVAudioEngine` → PCM16 24 kHz mono em pedaços de 100 ms (`PCM16`, `PCMConverter`, `WAV`); reinicia com o formato novo quando o dispositivo muda (Bluetooth)
+- `MicrophoneStream` — `AVAudioEngine` → PCM16 24 kHz mono em pedaços de 100 ms (`PCM16`, `PCMConverter` com qualquer formato de saída, `WAV`); reinicia com o formato novo quando o dispositivo muda (Bluetooth)
 - `OpenAIRealtimeTranscriber` — actor; `wss://api.openai.com/v1/realtime?intent=transcription`, `turn_detection: null`, commit manual, `keywords`
 - `OpenAITranscriptionClient` — plano B: POST /v1/audio/transcriptions com `gpt-transcribe`, `languages[]` e `keywords[]`
 - `OpenAITextProcessor` — POST /v1/chat/completions com `gpt-5.6-luna` (`reasoning_effort: "none"`, resposta JSON `{"text"}`); recusa respostas vazias ou muito maiores do que o ditado
@@ -50,19 +53,22 @@ Pipeline: atalho → `FocusDetector` (app ou site → tipo → estilo) + `Dictat
 - `KeychainService` — API key no Keychain (service: com.wishperpro.desktop)
 - `SoundCuePlayer` — sons de início/fim
 - `Permissions` — pedido de acesso ao microfone
+- `ScreenRecorder` — um `SCStream` (ecrã, som do Mac, microfone) numa fila série → `RecordingWriter`; `onMicrophone` (PCM16 24 kHz + nível), `onEnded` (`nil` quando se para no menu do sistema); macOS 15+
+- `RecordingWriter` — `AVAssetWriter` `.mov` com fragmentos de 10 s: H.264 (≤ 3840×2160, 30 fps), voz AAC mono 48 kHz (convertida e cronometrada por amostras), som do Mac AAC estéreo; `RecordingSize`, `RecordingFile`
 
 ### Persistência
 
 - **Keychain**: API key OpenAI (único segredo)
-- **UserDefaults** (`DefaultsKey` e `TextSettings`, prefixo `wishper.`): atalho e comportamento, tradução e línguas, colar, repor clipboard, estilo e posição da bolha, ícone na Dock, limpeza por IA, estilo por tipo, tipo por app ou site, sítios recentes, dicionário
-- Áudio só em memória; sem base de dados, sem backend
+- **UserDefaults** (`DefaultsKey`, `TextSettings` e `RecordingController`, prefixo `wishper.`): atalho e comportamento, tradução e línguas, colar, repor clipboard, estilo e posição da bolha, ícone na Dock, limpeza por IA, estilo por tipo, tipo por app ou site, sítios recentes, dicionário, microfone e som do Mac da gravação
+- Áudio do ditado só em memória; gravações de ecrã em `~/Movies/Wishper Pro`; sem base de dados, sem backend
 
 ### Concorrência
 
-- `@MainActor`: ViewModel, `TextSettings`, `DictationSession`, `GlobalHotkeyMonitor`, `FloatingBubbleController`
+- `@MainActor`: ViewModel, `TextSettings`, `DictationSession`, `GlobalHotkeyMonitor`, `FloatingBubbleController`, `RecordingController`
 - `OpenAIRealtimeTranscriber` é um actor; áudio e deltas passam por `AsyncStream` para manter a ordem
 - `MicrophoneStream` é `@unchecked Sendable` com `NSLock` (o tap corre numa thread de áudio)
 - `FocusDetector` lê a Acessibilidade numa tarefa separada (`Task.detached`); o ViewModel espera pelo resultado no fim do ditado
+- `ScreenRecorder` é `@unchecked Sendable`: as amostras do ScreenCaptureKit chegam numa fila série, a única que usa o `RecordingWriter`; o `finish(at:)` do escritor é `nonisolated(nonsending)`
 
 ## Key Conventions
 
