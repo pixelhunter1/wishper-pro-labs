@@ -84,6 +84,9 @@ enum SelfTest {
         checkTextProcessorRequest()
         checkRecordingSize()
         checkRecordingFile()
+        checkRecordingMicrophone()
+        checkRecordingConfiguration()
+        checkRecordingErrors()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -718,6 +721,54 @@ enum SelfTest {
             "gravação: nome ocupado ganha \" 2\""
         )
         check(RecordingFile.folder.path.hasSuffix("/Movies/Wishper Pro"), "gravação: pasta Filmes/Wishper Pro")
+    }
+
+    private static func checkRecordingMicrophone() {
+        let connected = ["Studio", "iPhone"]
+        check(RecordingMicrophone(storedValue: "", connected: connected) == .systemDefault, "microfone: vazio é o predefinido")
+        check(RecordingMicrophone(storedValue: "none", connected: connected) == .off, "microfone: \"none\" é sem microfone")
+        check(RecordingMicrophone(storedValue: "iPhone", connected: connected) == .device("iPhone"), "microfone: dispositivo ligado")
+        check(
+            RecordingMicrophone(storedValue: "Buds", connected: connected) == .systemDefault,
+            "microfone: dispositivo desligado passa ao predefinido"
+        )
+        check(
+            [RecordingMicrophone.off, .systemDefault, .device("iPhone")].map(\.storedValue) == ["none", "", "iPhone"],
+            "microfone: valores guardados"
+        )
+    }
+
+    private static func checkRecordingConfiguration() {
+        guard #available(macOS 15, *) else {
+            print("  info    macOS anterior ao 15: a gravação de ecrã não existe")
+            return
+        }
+        let size = CGSize(width: 3_840, height: 2_160)
+        let chosen = ScreenRecorder.configuration(size: size, microphone: .device("Studio"), systemAudio: true)
+        check(chosen.width == 3_840 && chosen.height == 2_160, "gravação: stream no tamanho de saída")
+        check(chosen.minimumFrameInterval == CMTime(value: 1, timescale: 30), "gravação: no máximo 30 fps")
+        check(
+            chosen.capturesAudio && chosen.excludesCurrentProcessAudio && chosen.sampleRate == 48_000
+                && chosen.channelCount == 2,
+            "gravação: som do Mac a 48 kHz estéreo, sem os sons da app"
+        )
+        check(chosen.captureMicrophone && chosen.microphoneCaptureDeviceID == "Studio", "gravação: microfone escolhido")
+        let standard = ScreenRecorder.configuration(size: size, microphone: .systemDefault, systemAudio: false)
+        check(
+            standard.captureMicrophone && standard.microphoneCaptureDeviceID == nil && !standard.capturesAudio,
+            "gravação: microfone predefinido e sem som do Mac"
+        )
+        check(!ScreenRecorder.configuration(size: size, microphone: .off, systemAudio: false).captureMicrophone, "gravação: sem microfone")
+    }
+
+    private static func checkRecordingErrors() {
+        let failure = NSError(domain: "teste", code: 1, userInfo: [NSLocalizedDescriptionKey: "A operação não pôde ser concluída."])
+        check(ScreenRecordingError.reason(failure) == "a operação não pôde ser concluída", "gravação: motivo em minúscula e sem ponto")
+        check(
+            ScreenRecordingError.interrupted("o ecrã foi desligado").localizedDescription
+                == "Gravação interrompida: o ecrã foi desligado. O que foi gravado ficou guardado.",
+            "gravação: mensagem de interrupção"
+        )
     }
 
     /// 2 s written like a real recording: a frame before time zero and a still screen, voice that drops from 48 to
