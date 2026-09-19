@@ -87,6 +87,7 @@ enum SelfTest {
         checkRecordingMicrophone()
         checkRecordingConfiguration()
         checkRecordingErrors()
+        checkRecordingPhases()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -768,6 +769,37 @@ enum SelfTest {
             ScreenRecordingError.interrupted("o ecrã foi desligado").localizedDescription
                 == "Gravação interrompida: o ecrã foi desligado. O que foi gravado ficou guardado.",
             "gravação: mensagem de interrupção"
+        )
+    }
+
+    private static func checkRecordingPhases() {
+        let phases: [RecordingPhase] = [
+            .idle, .choosing, .countdown(3), .recording(since: Date()), .saving,
+            .saved(URL(fileURLWithPath: "/tmp/gravação.mov")), .failed("x"),
+        ]
+        check(
+            phases.map(\.menuTitle) == [
+                "Gravar ecrã…", "Gravar ecrã…", "Cancelar gravação", "Parar gravação", "A guardar…",
+                "Gravar ecrã…", "Gravar ecrã…",
+            ],
+            "gravação: títulos do menu em cada fase"
+        )
+        check(
+            phases.map(\.acceptsMenuAction) == [true, false, true, true, false, true, true],
+            "gravação: o menu não faz nada a escolher nem a guardar"
+        )
+        check(
+            phases.map(\.isBusy) == [false, true, true, true, true, false, false],
+            "gravação: microfone e som do Mac bloqueados durante uma gravação"
+        )
+        check(
+            phases.map(\.showsBubble) == [false, false, true, true, true, true, true],
+            "gravação: bolha em todas as fases menos repouso e escolha"
+        )
+        check(
+            RecordingClock.text(0) == "00:00" && RecordingClock.text(83) == "01:23"
+                && RecordingClock.text(3_723) == "1:02:03",
+            "gravação: relógio 00:00, 01:23 e 1:02:03"
         )
     }
 
