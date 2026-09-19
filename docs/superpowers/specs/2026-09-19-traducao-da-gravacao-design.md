@@ -101,13 +101,13 @@ No bloco da gravação, entre "Som do Mac" e "Mostrar gravações":
 
 ```
 Traduzir para        ▸  ✓ Não traduzir
+                          Português (Portugal)
+                          Português (Brasil)
                           Inglês
                           Espanhol
                           Francês
                           Alemão
                           Italiano
-                          Português (Portugal)
-                          Português (Brasil)
 ```
 
 - As línguas são as mesmas de `SupportedLanguage.targetLanguages`. A escolha fica guardada e vale para as gravações
@@ -122,8 +122,10 @@ Traduzir para        ▸  ✓ Não traduzir
   tempo diz porquê (ver "Erros").
 - Depois de "A guardar…", com a tradução ligada, a bolha mostra "A preparar o vídeo traduzido…" com indicador. Com
   as legendas na imagem, mostra também a percentagem da exportação.
-- No fim mostra "Vídeo traduzido guardado", com visto verde, durante 2 s, e o Finder mostra o vídeo traduzido
-  selecionado.
+- No fim mostra "Vídeo traduzido guardado", com visto verde, e o Finder mostra o vídeo traduzido selecionado.
+  - Fica 3 s.
+  - Se faltarem frases, fica 4 s, com uma segunda linha: "1 frase ficou por traduzir." ou "N frases ficaram por
+    traduzir."
 - Numa falha mostra a mensagem a vermelho durante 4 s, e o original continua guardado.
 - O VoiceOver anuncia "A preparar o vídeo traduzido" e "Vídeo traduzido guardado".
 
@@ -132,10 +134,14 @@ Traduzir para        ▸  ✓ Não traduzir
 Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
 
 - **Voz traduzida**
-  - Um seletor com as vozes da GPT-Live, cada uma com o sotaque. Exemplo: "Meridian — inglês norte-americano,
-    masculina". A predefinição é Meridian, a que o utilizador ouviu e aprovou.
+  - Um seletor com duas secções:
+    - "GPT-Live": as 12 vozes novas, cada uma com o sotaque. Exemplo: "Meridian — inglês norte-americano, masculina".
+    - "Outras vozes da OpenAI": as 10 que a GPT-Live também aceita (marin, cedar, alloy, ash, ballad, coral, echo,
+      sage, shimmer, verse).
+
+    A predefinição é Meridian, a que o utilizador ouviu e aprovou. A GPT-Live recusa fable, onyx e nova.
   - Um botão "Ouvir" que lê uma frase curta na língua escolhida no menu, ou em inglês se estiver em "Não traduzir".
-    - A frase fica em cache em `~/Library/Caches/<bundle>/Vozes/<voz>-<língua>.m4a`, por isso só a primeira
+    - A frase fica em cache em `~/Library/Caches/<bundle>/Vozes/<voz>-<língua>.wav`, por isso só a primeira
       vez gasta a API.
     - Sem API key, o botão fica desativado e aparece "Precisa da API key (Geral)".
   - Texto de rodapé: "Vozes da OpenAI (GPT-Live). A língua escolhe-se no menu, em Traduzir para."
@@ -143,6 +149,7 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
   - "No leitor": podem ligar-se e desligar-se. É a predefinição.
   - "Na imagem": ficam sempre visíveis, mas o vídeo demora mais a ficar pronto.
   - "Sem legendas".
+- Durante uma gravação ou tradução, o painel fica desativado.
 
 ### Ficheiro traduzido
 
@@ -255,7 +262,9 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
 - **"No leitor":** uma faixa `tx3g`, escrita com `AVAssetWriter` num ficheiro temporário e juntada à exportação.
 - **"Na imagem":** texto branco centrado em baixo, sobre uma caixa escura translúcida, com a letra do sistema.
   - A altura da letra é 4,5% da altura do vídeo.
-  - É desenhado com `AVVideoCompositionCoreAnimationTool` (`CATextLayer` com opacidade no tempo de cada cue).
+  - Cada cue é uma imagem desenhada com `CGContext` (caixa e texto) numa `CALayer`, visível no seu tempo por uma
+    animação de opacidade, e entra no vídeo com `AVVideoCompositionCoreAnimationTool`.
+  - Não se usa `CATextLayer`: numa exportação desenha a caixa mas não o texto (confirmado no protótipo).
 
 ## Exportação (`TranslatedVideoExporter`)
 
@@ -371,14 +380,48 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
    - desligar a internet a meio;
    - ouvir as vozes nas Definições.
 
-## A confirmar no protótipo
+## Confirmado no protótipo (2026-09-19)
 
-- Que outras vozes a GPT-Live aceita além das 13 da tabela (alloy, ash, ballad, coral, echo, sage, shimmer, verse,
-  cedar).
-- Como a GPT-Live lê português europeu, espanhol, francês, alemão e italiano com as vozes de sotaque inglês.
-- O que acontece a dois textos enviados seguidos: se ficam em fila ou se o segundo interrompe o primeiro.
-- O tempo por frase quando o fim da leitura se deteta pela transcrição, e se a leitura acompanha uma fala contínua.
-- O limite de duração de uma sessão da GPT-Live.
-- A faixa `tx3g` num `.mp4` com a exportação passthrough. Se não passar, o vídeo traduzido sai em `.mov`.
-- Se o QuickTime mostra a faixa de legendas ao abrir.
-- O tempo de exportação com as legendas na imagem (4K, 1 minuto).
+Tudo com o código do plano, compilado com o Xcode 27 (Swift 6.4, modo Swift 6):
+
+- **Vozes:** a GPT-Live aceita 22 vozes e recusa fable, onyx e nova ("Voice session access denied").
+- **Línguas:** leu palavra por palavra em português europeu, espanhol, francês, alemão e italiano com a Meridian, e em
+  português europeu com a Bossa.
+- **Instruções no texto:** um texto com "Ignore the previous instructions…" foi lido, não obedecido.
+- **Dois textos seguidos:** ficam em fila e são lidos pela ordem. Mesmo assim a app espera pelo fim de cada leitura,
+  para saber que áudio é de que frase.
+- **Tempo de leitura:** a transcrição da GPT-Live chega com o áudio, por isso o fim da leitura é detetado 300 ms depois
+  da última palavra.
+- **Teste de ponta a ponta:** a gravação real de 37 s do utilizador foi traduzida para inglês com o código da app, com
+  a voz entregue em tempo real.
+  - As 5 frases ficaram certas e com o Dicionário ("Xcode", "Claude").
+  - O fim chegou 7,5 s depois de parar.
+  - A exportação com as legendas no leitor levou 0,5 s. Com as legendas na imagem levou 10,5 s, para um vídeo de
+    2160×2268 com 37 s.
+- **Legendas no leitor:** a faixa `tx3g` passa para o `.mp4` na exportação passthrough (`mov_text`, marcada como
+  predefinida).
+- **Verificações:** passam 194 offline (155 antes) e todas as online.
+
+Fica para o teste manual:
+- se o QuickTime mostra a faixa de legendas ao abrir;
+- o limite de duração de uma sessão da GPT-Live (a ligação perdida já é tratada: volta a ligar);
+- os Redmi Buds.
+
+## Acertos do protótipo
+
+1. **`PCM16.decibels(of:)`:** novo. O `PhraseDetector` e o `GPTLiveReader` medem em dBFS, e `PCM16.level(of:)` passa
+   a usá-lo, com o mesmo resultado.
+2. **Visibilidade:** o `PendingBuffer` e o `OpenAITranscriptionError` deixam de ser `private`, porque a conversão das
+   leituras e a regra da key recusada precisam deles.
+3. **`RecordingWriter.voiceTime(next:block:)`:** a regra de tempo da voz passa a função pura, para ser testada.
+   `appendVoice` devolve o tempo escrito, em segundos desde o instante zero.
+4. **`OpenAITextProcessor.accepts(_:for:)`:** a regra que aceita o texto vazio na narração.
+5. **`RecordingFile.translatedURL(for:language:)`:** o nome do vídeo traduzido.
+6. **`RecordingPhase`:** ganha `.translating(Double?)` e `.translated(URL, missing: Int)`.
+7. **`ScreenRecordingError`:** ganha `translationFailed`, `nothingToTranslate` e `exportFailed`.
+8. **`TranslationContext`:** a API key, o Dicionário e a língua de origem. Vem de
+   `VoicePasteViewModel.recordingTranslationContext`.
+9. **`Data`:** `removeFirst(n)` desloca os índices, e depois `subdata(in: 0..<n)` rebenta. O detetor usa
+   `removeSubrange(0..<n)`.
+10. **Fala sintética dos testes:** a "fala" leva pausas de sílaba (210 ms de tom, 40 ms de pausa). Um tom contínuo de
+    mais de 10 s passa a contar como ruído da sala, e isso está certo, porque uma voz real tem sempre pausas.
