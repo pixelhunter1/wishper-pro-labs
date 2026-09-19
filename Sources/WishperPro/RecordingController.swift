@@ -21,16 +21,16 @@ enum RecordingPhase: Equatable {
         case .countdown: return "Cancelar gravação"
         case .recording: return "Parar gravação"
         case .saving: return "A guardar…"
-        case .translating: return "A traduzir…"
+        case .translating: return "Cancelar tradução"
         case .idle, .choosing, .saved, .translated, .failed: return "Gravar ecrã…"
         }
     }
 
-    /// The menu item does nothing while the picker is open or the file is being saved or translated.
+    /// The menu item does nothing while the picker is open or the file is being saved.
     var acceptsMenuAction: Bool {
         switch self {
-        case .choosing, .saving, .translating: return false
-        case .idle, .countdown, .recording, .saved, .translated, .failed: return true
+        case .choosing, .saving: return false
+        case .idle, .countdown, .recording, .saved, .translating, .translated, .failed: return true
         }
     }
 
@@ -150,6 +150,7 @@ final class RecordingController: ObservableObject {
     private var translator: RecordingTranslator?
     private var translationTarget: SupportedLanguage?
     private var translationTask: Task<Void, Never>?
+    private var translationOriginal: URL?
 
     init() {
         guard Self.isSupported else { return }
@@ -166,13 +167,14 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    /// The menu item: record, cancel the countdown or stop, depending on the phase.
+    /// The menu item: record, cancel the countdown, stop, or cancel the translation, depending on the phase.
     func toggle() {
         switch phase {
         case .idle, .saved, .translated, .failed: choose()
         case .countdown: cancel()
         case .recording: stop()
-        case .choosing, .saving, .translating: break
+        case .translating: cancelTranslation()
+        case .choosing, .saving: break
         }
     }
 
@@ -198,11 +200,8 @@ final class RecordingController: ObservableObject {
         } else {
             await stopTask?.value
         }
-        // A translation in progress is dropped; the original recording stays.
-        translationTask?.cancel()
-        translationTask = nil
-        await translator?.cancel()
-        translator = nil
+        // A translation in progress is dropped; the original recording stays and no half-written video is left.
+        await stopTranslation()
     }
 
     private func refreshMicrophones() {
@@ -434,6 +433,7 @@ final class RecordingController: ObservableObject {
     @available(macOS 15, *)
     private func translate(_ original: URL, with translator: RecordingTranslator, into target: SupportedLanguage, interruption: Error?) {
         setPhase(.translating(nil))
+        translationOriginal = original
         // A recording that stopped by itself is still translated; the bubble says why it stopped.
         notice = interruption.map { ScreenRecordingError.interrupted(ScreenRecordingError.reason($0)).localizedDescription }
         let subtitles = subtitles
@@ -443,6 +443,7 @@ final class RecordingController: ObservableObject {
             defer {
                 self.translator = nil
                 self.translationTask = nil
+                self.translationOriginal = nil
                 self.notice = nil
             }
             guard !result.phrases.isEmpty else {
@@ -465,6 +466,37 @@ final class RecordingController: ObservableObject {
                 guard !Task.isCancelled else { return }
                 NSWorkspace.shared.activateFileViewerSelecting([original])
                 self.fail(.exportFailed(ScreenRecordingError.reason(error)))
+            }
+        }
+    }
+
+    /// Stops a translation in progress and waits until it has: its task is cancelled first (its own calls stop), then
+    /// the translator (its worker and the GPT-Live session), then the task is awaited so the exporter cleans up.
+    private func stopTranslation() async {
+        let task = translationTask
+        let translator = translator
+        task?.cancel()
+        await translator?.cancel()
+        await task?.value
+        translationTask = nil
+        self.translator = nil
+        translationOriginal = nil
+    }
+
+    /// "Cancelar tradução": the translation stops, the original stays and Finder shows it. Until the translation has
+    /// stopped the phase is "A guardar…", so a new recording can't start on top of it.
+    private func cancelTranslation() {
+        let original = translationOriginal
+        setPhase(.saving)
+        notice = nil
+        Task { [weak self] in
+            await self?.stopTranslation()
+            guard let self else { return }
+            if let original {
+                NSWorkspace.shared.activateFileViewerSelecting([original])
+                self.setPhase(.saved(original))
+            } else {
+                self.setPhase(.idle)
             }
         }
     }
@@ -502,7 +534,8 @@ final class RecordingController: ObservableObject {
         setPhase(.failed(error.localizedDescription))
     }
 
-    /// `saved` stays visible for 2 s and `failed` for 4 s, then the phase returns to idle.
+    /// `saved` stays visible for 2 s, `translated` for 3 s (4 s with missing phrases) and `failed` for 4 s, then the
+    /// phase returns to idle.
     private func setPhase(_ newPhase: RecordingPhase) {
         phase = newPhase
         resetTask?.cancel()

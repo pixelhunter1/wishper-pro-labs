@@ -1189,6 +1189,32 @@ enum SelfTest {
                 && refusal.firstError.map(RecordingTranslator.isRefusal) == true,
             "tradutor: uma key recusada não volta a ser usada (\(transcriptions.all.count) chamada)"
         )
+
+        // Reads that always fail: each phrase fails its three tries while recording, and the last round stops at the
+        // first phrase that fails again.
+        let twoPhrases = syntheticVoice([(1, false), (2, true), (2, false), (2, true), (1.5, false)], speech: -45, noise: -70)
+        let failedReads = LockedList<String>()
+        let stalled = RecordingTranslator(steps: TranslationSteps(
+            transcribe: { phrase in "frase \(Int(phrase.start.rounded()))" },
+            translate: { text, _ in text },
+            read: { text in
+                failedReads.append(text)
+                throw URLError(.timedOut)
+            },
+            close: {}
+        ))
+        await stalled.start()
+        var stalledOffset = 0
+        while stalledOffset < twoPhrases.count {
+            let end = min(stalledOffset + 1_008, twoPhrases.count)
+            stalled.add(twoPhrases.subdata(in: stalledOffset..<end), at: Double(stalledOffset / 2) / PCM16.sampleRate)
+            stalledOffset = end
+        }
+        let stalledResult = await stalled.finish()
+        check(
+            stalledResult.failed == 2 && failedReads.all.count == 9,
+            "tradutor: a última volta para na primeira frase que volta a falhar (\(failedReads.all.count) leituras)"
+        )
     }
 
     private static func checkTranslatedFileName() {
@@ -1227,6 +1253,11 @@ enum SelfTest {
                     video == 1 && audio.count == 1 && subtitles == (style == .player ? 1 : 0) && abs(duration - 2) <= 0.1,
                     "vídeo traduzido (\(style.title)): 1 vídeo, 1 áudio, \(subtitles) legendas, \(format(duration)) s"
                 )
+                if style == .image {
+                    let during = try await brightPixels(asset, at: 0.75)
+                    let after = try await brightPixels(asset, at: 1.8)
+                    check(during > after + 10, "vídeo traduzido: a legenda fica desenhada na imagem (\(during) píxeis claros, \(after) depois)")
+                }
                 if style == .off, let track = audio.first {
                     let levels = try await audioLevels(asset, track: track, windows: [(0.55, 0.95), (1.3, 1.9)])
                     check(levels[0] > -30 && levels[1] < -60, "vídeo traduzido: a voz está no tempo da frase (\(format(levels[0])) e \(format(levels[1])) dBFS)")
@@ -1283,12 +1314,12 @@ enum SelfTest {
         let file = URL(fileURLWithPath: "/tmp/gravação (Inglês).mp4")
         let phases: [RecordingPhase] = [.translating(nil), .translating(0.4), .translated(file, missing: 0)]
         check(
-            phases.map(\.menuTitle) == ["A traduzir…", "A traduzir…", "Gravar ecrã…"]
-                && phases.map(\.acceptsMenuAction) == [false, false, true]
+            phases.map(\.menuTitle) == ["Cancelar tradução", "Cancelar tradução", "Gravar ecrã…"]
+                && phases.map(\.acceptsMenuAction) == [true, true, true]
                 && phases.map(\.isBusy) == [true, true, false]
                 && phases.allSatisfy(\.showsBubble)
                 && !phases.contains(where: \.acceptsStopShortcut),
-            "tradução: a traduzir, o menu e as definições esperam; depois pode gravar-se outra vez"
+            "tradução: a traduzir, as definições esperam e o menu cancela; depois pode gravar-se outra vez"
         )
         check(
             ScreenRecordingError.translationFailed("a API key é inválida").localizedDescription
@@ -1298,6 +1329,39 @@ enum SelfTest {
                 && ScreenRecordingError.nothingToTranslate.localizedDescription == "Não ouvi nenhuma frase para traduzir.",
             "tradução: mensagens de falha"
         )
+    }
+
+    /// Bright pixels (every channel above 200) in the bottom third of a video frame.
+    nonisolated private static func brightPixels(_ asset: AVAsset, at seconds: Double) async throws -> Int {
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceAfter = .zero
+        let (image, _) = try await generator.image(at: CMTime(seconds: seconds, preferredTimescale: 600))
+        let width = image.width
+        let height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        pixels.withUnsafeMutableBytes { raw in
+            CGContext(
+                data: raw.baseAddress,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )?.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+        }
+        // The bitmap's first row is the top of the image, so the bottom third is its last third of rows.
+        var count = 0
+        for row in (height * 2 / 3)..<height {
+            for column in 0..<width {
+                let index = (row * width + column) * 4
+                if pixels[index] > 200, pixels[index + 1] > 200, pixels[index + 2] > 200 {
+                    count += 1
+                }
+            }
+        }
+        return count
     }
 
     private static func checkWordOverlap() {

@@ -111,11 +111,18 @@ actor RecordingTranslator {
         await worker?.value
         let retry = failures
         failures = []
-        for (phrase, text) in retry {
+        for (index, (phrase, text)) in retry.enumerated() {
+            let before = failures.count
             if let text {
                 await speak(phrase, text)
             } else {
                 await translate(phrase, then: nil)
+            }
+            // A phrase that fails again means the network is still down: the rest stay failed instead of each
+            // waiting through its three tries.
+            if failures.count > before {
+                failures += retry[(index + 1)...]
+                break
             }
         }
         await steps.close()

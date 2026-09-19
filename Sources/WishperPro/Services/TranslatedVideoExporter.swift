@@ -189,7 +189,10 @@ enum TranslatedVideoExporter {
             }
         }
         defer { watcher.cancel() }
-        try await session.export(to: output, as: fileType)
+        // Written in the work folder and moved at the end, so a cancelled or failed export never leaves a broken file.
+        let exported = work.appendingPathComponent("video.\(output.pathExtension)")
+        try await session.export(to: exported, as: fileType)
+        try FileManager.default.moveItem(at: exported, to: output)
     }
 
     /// `.mp4` keeps the `tx3g` subtitle track with a passthrough export (checked on macOS 26).
@@ -218,6 +221,8 @@ enum TranslatedVideoExporter {
             commonFormat: .pcmFormatFloat32,
             interleaved: false
         )
+        // ponytail: every reading is converted to 48 kHz float up front (~11.5 MB per minute of reading); convert each one
+        // when the mix reaches it if long recordings need it.
         let clips = zip(phrases, slots).compactMap { phrase, slot -> (start: Int, samples: [Float])? in
             guard let samples = samples(of: phrase.audio, rate: slot.rate) else { return nil }
             return (Int((slot.start * sampleRate).rounded()), samples)
@@ -446,6 +451,8 @@ enum TranslatedVideoExporter {
         videoLayer.frame = parent.frame
         parent.addSublayer(videoLayer)
         let fontSize = (size.height * 0.045).rounded()
+        // ponytail: one bitmap per cue stays alive for the whole export (~2 MB each at 2160 px); draw
+        // them lazily if long burned-in recordings need it.
         for cue in cues {
             let box = subtitleBox(cue.text, fontSize: fontSize, maxWidth: size.width * 0.9)
             box.position = CGPoint(x: size.width / 2, y: size.height * 0.06 + box.bounds.height / 2)
@@ -455,7 +462,7 @@ enum TranslatedVideoExporter {
             show.toValue = 1
             show.beginTime = AVCoreAnimationBeginTimeAtZero + cue.start
             show.duration = cue.end - cue.start
-            show.isRemovedOnCompletion = true
+            show.isRemovedOnCompletion = false
             box.add(show, forKey: "show")
             parent.addSublayer(box)
         }

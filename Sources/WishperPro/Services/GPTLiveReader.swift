@@ -216,7 +216,11 @@ actor GPTLiveReader {
                 }
             }
             if now - begin >= Self.readTimeout {
-                guard lastSpeech != nil else { throw GPTLiveError.timeout }
+                guard lastSpeech != nil else {
+                    // A session that stays silent is dead: the next read connects again.
+                    fail(GPTLiveError.timeout)
+                    throw GPTLiveError.timeout
+                }
                 break
             }
         }
