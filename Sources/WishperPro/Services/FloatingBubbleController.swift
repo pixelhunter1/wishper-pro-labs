@@ -34,17 +34,26 @@ enum BubblePosition: String, CaseIterable, Identifiable {
     }
 }
 
-/// Floating, click-through panel that shows the dictation state. It never takes focus.
+/// Floating, click-through panel that shows the dictation or the screen recording. It never takes focus.
 @MainActor
 final class FloatingBubbleController {
     private static let panelSize = NSSize(width: 520, height: 140)
 
     private let viewModel: VoicePasteViewModel
+    private let recording: RecordingController
     private var panel: NSPanel?
     private var cancellables: Set<AnyCancellable> = []
+    private var announcedDictation = DictationPhase.idle
+    private var announcedRecording = RecordingPhase.idle
 
-    init(viewModel: VoicePasteViewModel) {
+    init(viewModel: VoicePasteViewModel, recording: RecordingController) {
         self.viewModel = viewModel
+        self.recording = recording
+    }
+
+    /// The bubble's window, which the screen recording picker leaves out.
+    var windowNumber: Int? {
+        panel?.windowNumber
     }
 
     func start() {
@@ -63,29 +72,46 @@ final class FloatingBubbleController {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         panel.ignoresMouseEvents = true
         panel.isReleasedWhenClosed = false
-        panel.contentView = NSHostingView(rootView: FloatingBubbleContent(viewModel: viewModel))
+        panel.contentView = NSHostingView(rootView: FloatingBubbleContent(viewModel: viewModel, recording: recording))
         self.panel = panel
 
+        // @Published sends the new value before the property changes, so both phases come from the publishers.
         viewModel.$phase
             .removeDuplicates()
+            .combineLatest(recording.$phase.removeDuplicates())
             .receive(on: RunLoop.main)
-            .sink { [weak self] phase in
-                self?.show(phase)
+            .sink { [weak self] dictation, recording in
+                self?.show(dictation, recording)
             }
             .store(in: &cancellables)
     }
 
-    private func show(_ phase: DictationPhase) {
-        announce(phase)
+    /// A dictation takes the bubble; otherwise it shows the recording.
+    private func show(_ dictation: DictationPhase, _ recordingPhase: RecordingPhase) {
+        if dictation != announcedDictation {
+            announcedDictation = dictation
+            announce(dictation)
+        }
+        if recordingPhase != announcedRecording {
+            announcedRecording = recordingPhase
+            announce(recordingPhase)
+        }
         guard let panel else { return }
         let isVisible: Bool
-        switch phase {
-        case .idle:
-            isVisible = false
+        switch dictation {
         case .failed:
             isVisible = true
         case .listening, .finalizing, .done:
             isVisible = viewModel.bubbleMode != .hidden
+        case .idle:
+            switch recordingPhase {
+            case .idle, .choosing:
+                isVisible = false
+            case .failed:
+                isVisible = true
+            case .countdown, .recording, .saving, .saved:
+                isVisible = viewModel.bubbleMode != .hidden
+            }
         }
         guard isVisible else {
             panel.orderOut(nil)
@@ -119,16 +145,31 @@ final class FloatingBubbleController {
 
     /// The panel never takes focus, so VoiceOver users hear state changes as announcements.
     private func announce(_ phase: DictationPhase) {
-        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
-        let message: String
         switch phase {
         case .listening:
-            message = "A ouvir"
+            post("A ouvir")
         case .done(let text), .failed(let text):
-            message = text
+            post(text)
         case .idle, .finalizing:
             return
         }
+    }
+
+    private func announce(_ phase: RecordingPhase) {
+        switch phase {
+        case .recording:
+            post("A gravar")
+        case .saved:
+            post("Gravação guardada")
+        case .failed(let text):
+            post(text)
+        case .idle, .choosing, .countdown, .saving:
+            return
+        }
+    }
+
+    private func post(_ message: String) {
+        guard NSWorkspace.shared.isVoiceOverEnabled else { return }
         NSAccessibility.post(
             element: NSApp as Any,
             notification: .announcementRequested,
@@ -139,16 +180,28 @@ final class FloatingBubbleController {
 
 private struct FloatingBubbleContent: View {
     @ObservedObject var viewModel: VoicePasteViewModel
+    @ObservedObject var recording: RecordingController
 
     var body: some View {
-        VoiceBubbleView(
-            phase: viewModel.phase,
-            mode: viewModel.bubbleMode,
-            level: viewModel.audioLevel,
-            liveText: viewModel.liveTranscript,
-            appName: viewModel.targetAppName,
-            appIcon: viewModel.targetAppIcon
-        )
+        Group {
+            if viewModel.phase == .idle, recording.phase.showsBubble {
+                RecordingBubbleView(
+                    phase: recording.phase,
+                    level: recording.level,
+                    elapsed: recording.elapsed,
+                    notice: recording.notice
+                )
+            } else {
+                VoiceBubbleView(
+                    phase: viewModel.phase,
+                    mode: viewModel.bubbleMode,
+                    level: viewModel.audioLevel,
+                    liveText: viewModel.liveTranscript,
+                    appName: viewModel.targetAppName,
+                    appIcon: viewModel.targetAppIcon
+                )
+            }
+        }
         .padding(12)
         .frame(width: 520, height: 140, alignment: alignment)
     }

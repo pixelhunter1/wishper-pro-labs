@@ -95,6 +95,90 @@ struct VoiceBubbleView: View {
     }
 }
 
+/// The bubble during a screen recording: countdown, time and level, saving, saved or why it stopped.
+struct RecordingBubbleView: View {
+    let phase: RecordingPhase
+    let level: Double
+    let elapsed: TimeInterval
+    let notice: String?
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+    @Environment(\.colorSchemeContrast) private var contrast
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 10) {
+                leading
+            }
+            if let notice {
+                Text(notice)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .modifier(BubbleBackground(reduceTransparency: reduceTransparency, highContrast: contrast == .increased))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+    }
+
+    @ViewBuilder
+    private var leading: some View {
+        switch phase {
+        case .countdown(let seconds):
+            Text("A gravar em \(seconds)")
+                .font(.callout.weight(.medium))
+                .monospacedDigit()
+            WaveformBars(level: level, animated: !reduceMotion)
+        case .recording:
+            Circle()
+                .fill(.red)
+                .frame(width: 8, height: 8)
+            Text(RecordingClock.text(elapsed))
+                .font(.callout.weight(.medium))
+                .monospacedDigit()
+            WaveformBars(level: level, animated: !reduceMotion)
+        case .saving:
+            ProgressView()
+                .controlSize(.small)
+            Text("A guardar…")
+                .font(.callout.weight(.medium))
+        case .saved:
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            Text("Gravação guardada")
+                .font(.callout.weight(.medium))
+        case .failed(let message):
+            Image(systemName: "xmark.octagon.fill")
+                .foregroundStyle(.red)
+            Text(message)
+                .font(.callout.weight(.medium))
+                .lineLimit(2)
+        case .idle, .choosing:
+            EmptyView()
+        }
+    }
+
+    private var accessibilityText: String {
+        switch phase {
+        case .countdown(let seconds):
+            return "Wishper Pro, a gravar em \(seconds)"
+        case .recording:
+            return "Wishper Pro, a gravar, \(RecordingClock.text(elapsed))"
+        case .saving:
+            return "Wishper Pro, a guardar a gravação"
+        case .saved:
+            return "Wishper Pro, gravação guardada"
+        case .failed(let message):
+            return "Wishper Pro, \(message)"
+        case .idle, .choosing:
+            return "Wishper Pro"
+        }
+    }
+}
+
 private struct WaveformBars: View {
     let level: Double
     let animated: Bool

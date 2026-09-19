@@ -6,9 +6,9 @@ struct WishperProApp: App {
 
     var body: some Scene {
         MenuBarExtra {
-            MenuBarContent(viewModel: appDelegate.viewModel)
+            MenuBarContent(viewModel: appDelegate.viewModel, recording: appDelegate.recording)
         } label: {
-            MenuBarLabel(viewModel: appDelegate.viewModel)
+            MenuBarLabel(viewModel: appDelegate.viewModel, recording: appDelegate.recording)
         }
         .menuBarExtraStyle(.menu)
 
@@ -31,11 +31,15 @@ struct WishperProApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let viewModel = VoicePasteViewModel()
-    private lazy var bubbleController = FloatingBubbleController(viewModel: viewModel)
+    let recording = RecordingController()
+    private lazy var bubbleController = FloatingBubbleController(viewModel: viewModel, recording: recording)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         viewModel.applyDockVisibility()
         bubbleController.start()
+        recording.excludedWindowIDs = { [weak self] in
+            [self?.bubbleController.windowNumber].compactMap { $0 }
+        }
         if viewModel.needsSetup {
             DispatchQueue.main.async { SettingsOpener.open() }
         }
@@ -44,6 +48,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         SettingsOpener.open()
         return false
+    }
+
+    /// A screen recording in progress is closed properly before the app quits.
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard recording.phase.isBusy else { return .terminateNow }
+        Task {
+            await recording.finishBeforeQuit()
+            sender.reply(toApplicationShouldTerminate: true)
+        }
+        return .terminateLater
     }
 }
 
@@ -74,6 +88,7 @@ private struct OpenSettingsButton: View {
 
 struct MenuBarContent: View {
     @ObservedObject var viewModel: VoicePasteViewModel
+    @ObservedObject var recording: RecordingController
 
     var body: some View {
         Text(viewModel.menuStatusText)
@@ -85,6 +100,30 @@ struct MenuBarContent: View {
             viewModel.copyLastTranscript()
         }
         .disabled(viewModel.lastTranscript.isEmpty)
+        if RecordingController.isSupported {
+            Divider()
+            Button(recording.phase.menuTitle) {
+                recording.toggle()
+            }
+            .disabled(!recording.phase.acceptsMenuAction)
+            Picker("Microfone", selection: Binding(
+                get: { recording.menuMicrophone },
+                set: { recording.microphoneID = $0 }
+            )) {
+                Text("Predefinido do sistema").tag("")
+                ForEach(recording.microphones) { microphone in
+                    Text(microphone.name).tag(microphone.id)
+                }
+                Text("Sem microfone").tag("none")
+            }
+            .pickerStyle(.menu)
+            .disabled(recording.phase.isBusy)
+            Toggle("Som do Mac", isOn: $recording.recordsSystemAudio)
+                .disabled(recording.phase.isBusy)
+            Button("Mostrar gravações") {
+                recording.showRecordings()
+            }
+        }
         Divider()
         Button("Definições…") {
             SettingsOpener.open()
@@ -104,17 +143,45 @@ struct MenuBarContent: View {
 
 struct MenuBarLabel: View {
     @ObservedObject var viewModel: VoicePasteViewModel
+    @ObservedObject var recording: RecordingController
 
     var body: some View {
         Group {
-            if viewModel.isRecording || viewModel.isTranscribing {
-                activeIcon
-            } else {
-                Image(nsImage: BrandMark.image(pointSize: 18))
-                    .renderingMode(.template)
+            switch recording.phase {
+            case .countdown(let seconds):
+                recordingLabel("\(seconds)")
+            case .recording:
+                recordingLabel(RecordingClock.text(recording.elapsed))
+            default:
+                if viewModel.isRecording || viewModel.isTranscribing {
+                    activeIcon
+                } else {
+                    Image(nsImage: BrandMark.image(pointSize: 18))
+                        .renderingMode(.template)
+                }
             }
         }
-        .accessibilityLabel("Wishper Pro")
+        .accessibilityLabel(accessibilityText)
+    }
+
+    /// Like macOS's own screen recording: a record symbol and the time, in the menu bar's monochrome.
+    private func recordingLabel(_ text: String) -> some View {
+        HStack(spacing: 4) {
+            Image(systemName: "record.circle")
+            Text(text)
+                .monospacedDigit()
+        }
+    }
+
+    private var accessibilityText: String {
+        switch recording.phase {
+        case .countdown(let seconds):
+            return "Wishper Pro, a gravar em \(seconds)"
+        case .recording:
+            return "Wishper Pro, a gravar, \(RecordingClock.text(recording.elapsed))"
+        default:
+            return "Wishper Pro"
+        }
     }
 
     @ViewBuilder
