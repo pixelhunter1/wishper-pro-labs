@@ -12,8 +12,14 @@ enum PCM16 {
 
     /// RMS level in dBFS mapped from -55…0 dB to 0…1 (the scale the old AVAudioRecorder meter used).
     static func level(of data: Data) -> Double {
+        guard data.count >= 2 else { return 0 }
+        return min(max((decibels(of: data) + 55) / 55, 0), 1)
+    }
+
+    /// RMS level in dBFS (−100 for silence).
+    static func decibels(of data: Data) -> Double {
         let count = data.count / 2
-        guard count > 0 else { return 0 }
+        guard count > 0 else { return -100 }
         var sum: Double = 0
         data.withUnsafeBytes { raw in
             for index in 0..<count {
@@ -21,8 +27,7 @@ enum PCM16 {
                 sum += sample * sample
             }
         }
-        let decibels = 10 * log10(max(sum / Double(count), 1e-10))
-        return min(max((decibels + 55) / 55, 0), 1)
+        return 10 * log10(max(sum / Double(count), 1e-10))
     }
 }
 

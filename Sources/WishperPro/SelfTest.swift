@@ -89,6 +89,7 @@ enum SelfTest {
         checkRecordingErrors()
         checkRecordingPhases()
         checkVoiceTiming()
+        checkPhraseDetector()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -911,6 +912,69 @@ enum SelfTest {
         )
         check(RecordingWriter.voiceTime(next: time(1_000), block: time(1_300)) == time(1_300), "voz: uma falha de 300 ms recomeça no bloco")
         check(RecordingWriter.voiceTime(next: time(1_000), block: time(900)) == nil, "voz: um bloco 100 ms adiantado é descartado")
+    }
+
+    /// Phrases from synthetic audio (a 200 Hz tone over noise), fed in 21 ms blocks like the microphone's.
+    private static func checkPhraseDetector() {
+        let pattern: [(seconds: Double, speech: Bool)] = [(1, false), (2, true), (0.4, false), (1, true), (1, false), (1.5, true), (2, false)]
+        let quiet = detectPhrases(pattern, speech: -45, noise: -70)
+        check(quiet.count == 2, "frases: 2 frases, e uma pausa de 0,4 s não divide (obtidas \(quiet.count))")
+        if quiet.count == 2 {
+            check(abs(quiet[0].start - 0.9) < 0.04 && abs(quiet[0].end - 4.56) < 0.04, "frases: a 1.ª vai de 0,9 a 4,56 s (\(format(quiet[0].start))–\(format(quiet[0].end)))")
+            check(abs(quiet[1].start - 5.3) < 0.04 && abs(quiet[1].end - 7.06) < 0.04, "frases: a 2.ª vai de 5,3 a 7,06 s (\(format(quiet[1].start))–\(format(quiet[1].end)))")
+            check(abs(Double(quiet[0].pcm.count) / 48_000 - (quiet[0].end - quiet[0].start)) < 0.03, "frases: o áudio da frase tem a sua duração")
+        }
+        let loud = detectPhrases(pattern, speech: -30, noise: -50)
+        check(
+            loud.count == 2 && zip(loud, quiet).allSatisfy { abs($0.start - $1.start) < 0.04 && abs($0.end - $1.end) < 0.04 },
+            "frases: o limiar acompanha o ruído (sala a −50 dBFS)"
+        )
+        let long = detectPhrases([(0.5, false), (20, true), (1, false)], speech: -45, noise: -70)
+        check(
+            long.count == 2 && long[0].end - long[0].start <= 15.2 && abs(long[1].end - 20.66) < 0.04,
+            "frases: 20 s seguidos são cortados em 2 frases"
+        )
+        check(detectPhrases([(1, false), (0.1, true), (1, false)], speech: -40, noise: -70).isEmpty, "frases: um estalo de 100 ms não é frase")
+    }
+
+    /// Runs `PhraseDetector` over synthetic audio after 3 s of the room (the countdown).
+    private static func detectPhrases(_ pattern: [(seconds: Double, speech: Bool)], speech: Double, noise: Double) -> [Phrase] {
+        var detector = PhraseDetector()
+        detector.prime(syntheticVoice([(3, false)], speech: speech, noise: noise))
+        let audio = syntheticVoice(pattern, speech: speech, noise: noise)
+        var phrases: [Phrase] = []
+        var offset = 0
+        while offset < audio.count {
+            let end = min(offset + 1_008, audio.count)
+            phrases += detector.append(audio.subdata(in: offset..<end), at: Double(offset / 2) / PCM16.sampleRate)
+            offset = end
+        }
+        return phrases + detector.finish()
+    }
+
+    /// PCM16 24 kHz: "syllables" of a 200 Hz tone at `speech` dBFS (210 ms on, 40 ms off, like the gaps between real
+    /// syllables, and on at the end) where `pattern` says so, over noise at `noise` dBFS.
+    private static func syntheticVoice(_ pattern: [(seconds: Double, speech: Bool)], speech: Double, noise: Double) -> Data {
+        var seed: UInt64 = 42
+        let noiseAmplitude = pow(10, noise / 20) * 3.0.squareRoot() * 32_768
+        let toneAmplitude = pow(10, speech / 20) * 2.0.squareRoot() * 32_768
+        var samples: [Int16] = []
+        var index = 0
+        for part in pattern {
+            let count = Int(part.seconds * PCM16.sampleRate)
+            for sample in 0..<count {
+                seed = seed &* 6_364_136_223_846_793_005 &+ 1_442_695_040_888_963_407
+                var value = (Double(seed >> 11) / Double(1 << 53) * 2 - 1) * noiseAmplitude
+                let time = Double(sample) / PCM16.sampleRate
+                let isGap = time.truncatingRemainder(dividingBy: 0.25) >= 0.21 && time < part.seconds - 0.25
+                if part.speech, !isGap {
+                    value += toneAmplitude * sin(2 * .pi * 200 * Double(index) / PCM16.sampleRate)
+                }
+                samples.append(Int16(max(-32_768, min(32_767, value.rounded()))))
+                index += 1
+            }
+        }
+        return samples.withUnsafeBufferPointer { Data(buffer: $0) }
     }
 
     private static func checkWordOverlap() {
