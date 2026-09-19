@@ -146,6 +146,8 @@ final class RecordingWriter {
             cancel()
             throw CocoaError(.fileWriteUnknown)
         }
+        // A failed writer raises an exception on endSession and finishWriting; what it wrote stays in its fragments.
+        guard writer.status == .writing else { throw writer.error ?? CocoaError(.fileWriteUnknown) }
         if let lastFrame, end > lastFrameTime {
             appendFrame(lastFrame, at: end)
         }
@@ -159,7 +161,9 @@ final class RecordingWriter {
 
     /// Stops without keeping a file (cancelled before time zero).
     func cancel() {
-        writer.cancelWriting()
+        if writer.status == .writing {
+            writer.cancelWriting()
+        }
         try? FileManager.default.removeItem(at: writer.outputURL)
     }
 
