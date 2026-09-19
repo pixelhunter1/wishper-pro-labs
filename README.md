@@ -31,7 +31,8 @@ Hold a hotkey, speak, and the words land in whatever app you are in: cleaned up,
 - **Never loses a dictation.** If the cleanup call fails or times out, the transcript is pasted anyway with a warning. If the live connection drops, the recording is transcribed by `gpt-transcribe` instead.
 - **Your clipboard survives.** What you had copied is put back after the paste, and the pasted text is marked as transient so clipboard managers skip it.
 - **Push-to-talk or hands-free.** Hold the hotkey to talk, or tap it once to keep recording and again to stop. `Esc` cancels.
-- **Screen recording (macOS 15+).** Record a display, a window or an app picked in the system picker, with the microphone you choose and, if you want, the Mac's sound. No Screen Recording permission is needed, the bubble never shows in the video, and your voice goes in its own track on the video's clock — ready for translation.
+- **Screen recording (macOS 15+).** Record a display, a window or an app picked in the system picker, with the microphone you choose and, if you want, the Mac's sound. No Screen Recording permission is needed, the bubble never shows in the video, and your voice goes in its own track on the video's clock.
+- **Translated screen recordings.** Pick a language in **Traduzir para** before recording. While you talk, each phrase is transcribed, translated with your dictionary and read aloud by a GPT-Live voice; a few seconds after you stop, a second video (`… (Inglês).mp4`) has the translated voice starting at the second each phrase was said, the Mac's sound, and subtitles in the player, drawn into the picture, or none. Choose among 22 voices, with a sample, in Settings → Gravação.
 - **A menu bar app.** No Dock icon by default, native Settings with a Finder-style sidebar, follows light and dark mode, and supports VoiceOver, Reduce Motion, Reduce Transparency and Increase Contrast.
 - **No backend.** Dictation audio never touches the disk, the API key lives in the Keychain, and settings live in UserDefaults.
 
@@ -115,6 +116,8 @@ Settings open by themselves while anything is missing:
 
 To record the screen, open the menu bar menu and choose **Gravar ecrã…**, then pick a display, a window or an app. After a 3-2-1 countdown the bubble shows the time; choose **Parar gravação** in the menu, or press **Control-Command-Esc**, to stop. The file lands in `~/Movies/Wishper Pro` and Finder shows it. **Microfone** and **Som do Mac** in the same menu set what the next recording captures.
 
+To translate a recording, choose a language in **Traduzir para** in the same menu before you record. When you stop, the original is saved as usual and, a few seconds later, the translated video appears next to it in Finder. The voice and the subtitles are set in Settings → Gravação; the spoken language is the dictation language (Settings → Ditado).
+
 ## Settings
 
 Open them with **⌘,** or from the menu bar. The sidebar lists these pages; the last three sit under **Texto**.
@@ -124,6 +127,7 @@ Open them with **⌘,** or from the menu bar. The sidebar lists these pages; the
 | **Geral** | API key, permissions, start at login, Dock icon |
 | **Ditado** | Hotkey and behaviour (automatic, hold, toggle), dictation language, auto-paste, clipboard restore |
 | **Bolha** | Bubble style (live text, compact, hidden), position, and a preview |
+| **Gravação** | The translated voice (22 GPT-Live voices, with a sample) and where the subtitles go (macOS 15+) |
 | **Estilos** | AI cleanup on/off, a style per app type (AI chats, messages, email, documents, other), and the type of each app or site you have dictated into |
 | **Dicionário** | Your names, brands and acronyms |
 | **Tradução** | Translate after transcribing, and into which language |
@@ -135,13 +139,14 @@ Open them with **⌘,** or from the menu bar. The sidebar lists these pages; the
 | `gpt-live-transcribe` | live dictation | $0.017 / min |
 | `gpt-transcribe` | fallback when the live connection fails | $0.0045 / min |
 | `gpt-5.6-luna` | cleanup, style and translation | ≈ $0.0002 per dictation |
+| `gpt-live-1` | the translated recording's voice | $0.05 / min while recording |
 
-Roughly $0.02 for a minute of dictation, billed to your own OpenAI account.
+Roughly $0.02 for a minute of dictation, and $0.055 for a minute of translated recording, billed to your own OpenAI account.
 
 ## Privacy
 
 - No backend of its own: the app talks only to the OpenAI API.
-- Dictation audio is kept in memory for the duration of the dictation and never written to disk. Screen recordings are saved only to `~/Movies/Wishper Pro` and never uploaded.
+- Dictation audio is kept in memory for the duration of the dictation and never written to disk. Screen recordings are saved only to `~/Movies/Wishper Pro` and never uploaded; with a translation, each spoken phrase goes to OpenAI to be transcribed, and its translation to be read aloud.
 - In a browser, only the site's **domain** is stored, on this Mac, to remember its type. The full address never leaves the machine, and the cleanup request carries only the app's name and the type.
 - The API key lives in the Keychain (`com.wishperpro.desktop` / `openai-api-key`).
 - Turning off **Melhorar o texto com IA** removes the cleanup call entirely; the transcription itself is still done by a speech model.
@@ -158,6 +163,9 @@ Roughly $0.02 for a minute of dictation, billed to your own OpenAI account.
 | A site shows up as "Outros" | The browser did not expose its address (accessibility is required), or the site is not in the built-in list — pick its type in Settings → Estilos |
 | No "Gravar ecrã…" in the menu | Screen recording needs macOS 15 or later |
 | "Gravação interrompida: …" | The recorded window closed, the display went away or the disk filled up; what was recorded is in `~/Movies/Wishper Pro` |
+| "Sem API key: a gravar sem tradução." | Save the API key in Settings → Geral before recording |
+| "Tradução falhou: …" | No network or an invalid key; the original recording is saved |
+| "Não ouvi nenhuma frase para traduzir." | The recording has no speech the app could hear: check the microphone |
 
 ## Project layout
 
@@ -167,7 +175,7 @@ Sources/WishperPro/
   WishperProApp.swift         # menu bar app + Settings window
   SettingsView.swift
   VoicePasteViewModel.swift
-  RecordingController.swift   # screen recording: picker, countdown, file in Finder
+  RecordingController.swift   # screen recording: picker, countdown, file in Finder, translation
   TextStyles.swift            # app types, styles, catalog, dictionary, settings
   DictationSession.swift
   VoiceBubbleView.swift
@@ -179,6 +187,10 @@ Sources/WishperPro/
     OpenAITextProcessor.swift
     RecordingWriter.swift
     ScreenRecorder.swift
+    PhraseDetector.swift
+    GPTLiveReader.swift
+    RecordingTranslator.swift
+    TranslatedVideoExporter.swift
     FocusDetector.swift
     GlobalHotkeyMonitor.swift
     AutoPaster.swift
@@ -194,8 +206,8 @@ Design documents live in [`docs/superpowers/specs`](docs/superpowers/specs) and 
 
 ```bash
 swift build                          # debug build
-.build/debug/WishperPro --selftest   # 155 offline checks, no network
-./scripts/run-dev-app.sh --selftest  # the offline checks plus live, fallback and cleanup against the API
+.build/debug/WishperPro --selftest   # 196 offline checks, no network
+./scripts/run-dev-app.sh --selftest  # the offline checks plus live, fallback, cleanup, narration and GPT-Live against the API
 ./scripts/run-dev-app.sh             # a dev app bundle in /tmp, for testing the interface
 ```
 
