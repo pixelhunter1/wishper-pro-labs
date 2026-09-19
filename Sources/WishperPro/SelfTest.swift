@@ -80,6 +80,8 @@ enum SelfTest {
         checkTextSettings()
         checkKeywords()
         checkTextProcessorRequest()
+        checkRecordingSize()
+        checkRecordingFile()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -677,6 +679,39 @@ enum SelfTest {
             let lower = translated.lowercased()
             check(lower.contains("tomorrow") && !lower.contains("amanhã"), "limpeza: traduz para inglês na mesma chamada")
         }
+    }
+
+    private static func checkRecordingSize() {
+        func size(_ width: CGFloat, _ height: CGFloat, _ scale: CGFloat) -> CGSize {
+            RecordingSize.output(points: CGSize(width: width, height: height), scale: scale)
+        }
+        check(size(2_560, 1_440, 2) == CGSize(width: 3_840, height: 2_160), "gravação: Studio Display 5K → 3840×2160")
+        check(size(1_470, 956, 2) == CGSize(width: 2_940, height: 1_912), "gravação: MacBook Air 13\" fica em 2940×1912")
+        let window = size(1_281, 1_346, 2)
+        check(
+            max(window.width, window.height) <= 3_840 && min(window.width, window.height) <= 2_160
+                && Int(window.width) % 2 == 0 && Int(window.height) % 2 == 0
+                && abs(window.width / window.height - 1_281.0 / 1_346.0) < 0.01,
+            "gravação: janela alta reduzida, pares e na mesma proporção (\(Int(window.width))×\(Int(window.height)))"
+        )
+        check(size(1_001, 601, 1) == CGSize(width: 1_000, height: 600), "gravação: medidas ímpares descem para pares")
+    }
+
+    private static func checkRecordingFile() {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wishper-selftest-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let components = DateComponents(year: 2026, month: 9, day: 19, hour: 14, minute: 32, second: 10)
+        let date = Calendar.current.date(from: components)!
+        let first = RecordingFile.url(for: date, in: folder)
+        check(first.lastPathComponent == "Gravação 2026-09-19 às 14.32.10.mov", "gravação: nome com a data e a hora locais")
+        FileManager.default.createFile(atPath: first.path, contents: Data())
+        check(
+            RecordingFile.url(for: date, in: folder).lastPathComponent == "Gravação 2026-09-19 às 14.32.10 2.mov",
+            "gravação: nome ocupado ganha \" 2\""
+        )
+        check(RecordingFile.folder.path.hasSuffix("/Movies/Wishper Pro"), "gravação: pasta Filmes/Wishper Pro")
     }
 
     private static func checkWordOverlap() {
