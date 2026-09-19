@@ -95,6 +95,7 @@ enum SelfTest {
     }
 
     private static func runAsyncOfflineChecks() async {
+        await checkLiveReaderClosed()
         await checkRecordingWriter()
     }
 
@@ -1074,6 +1075,18 @@ enum SelfTest {
         } catch {
             await reader.close()
             check(false, "GPT-Live: ler uma frase (\(error.localizedDescription))")
+        }
+    }
+
+    /// A closed reader never connects again: its next read throws at once, without the network.
+    private static func checkLiveReaderClosed() async {
+        let reader = GPTLiveReader(apiKey: "sk-selftest", voice: LiveVoice.defaultID)
+        await reader.close()
+        do {
+            _ = try await reader.read("Olá")
+            check(false, "GPT-Live: depois de fechar, uma leitura não volta a ligar")
+        } catch {
+            check(error is CancellationError, "GPT-Live: depois de fechar, uma leitura não volta a ligar")
         }
     }
 

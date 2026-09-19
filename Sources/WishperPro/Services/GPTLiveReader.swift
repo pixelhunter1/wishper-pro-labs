@@ -93,6 +93,8 @@ actor GPTLiveReader {
     private var task: URLSessionWebSocketTask?
     private var isStarted = false
     private var isClosedByServer = false
+    /// Set by `close()`: the reader never connects again.
+    private var isClosed = false
     private var failure: Error?
     private var startWaiters: [CheckedContinuation<Void, Error>] = []
     private var silence: Task<Void, Never>?
@@ -122,8 +124,17 @@ actor GPTLiveReader {
         return best
     }
 
-    /// Ends the session (and its billing).
+    /// Ends the session (and its billing) for good: a read waiting for the session throws, and no later read connects.
     func close() async {
+        isClosed = true
+        let waiters = startWaiters
+        startWaiters.removeAll()
+        waiters.forEach { $0.resume(throwing: CancellationError()) }
+        await disconnect()
+    }
+
+    /// Closes the socket, with `session.close` first when the session started. The reader can connect again.
+    private func disconnect() async {
         silence?.cancel()
         silence = nil
         guard let task else { return }
@@ -195,6 +206,7 @@ actor GPTLiveReader {
         let begin = ContinuousClock.now
         while true {
             try await Task.sleep(for: .milliseconds(50))
+            if isClosed { throw CancellationError() }
             if let failure { throw failure }
             let now = ContinuousClock.now
             if let lastSpeech {
@@ -213,10 +225,13 @@ actor GPTLiveReader {
 
     /// Opens the session if needed (again after a dropped one) and waits for `session.started`.
     private func start() async throws {
+        if isClosed { throw CancellationError() }
         if failure != nil {
-            await close()
+            await disconnect()
             failure = nil
         }
+        // close() may have run while disconnecting.
+        if isClosed { throw CancellationError() }
         if isStarted { return }
         if task == nil { connect() }
         try await withCheckedThrowingContinuation { continuation in
@@ -250,7 +265,7 @@ actor GPTLiveReader {
                 @unknown default: break
                 }
             } catch {
-                if self.task === task { failFromTransport(error) }
+                failFromTransport(error, on: task)
                 return
             }
         }
@@ -296,9 +311,10 @@ actor GPTLiveReader {
     }
 
     private func send(_ text: String) {
-        task?.send(.string(text)) { [weak self] error in
+        guard let task else { return }
+        task.send(.string(text)) { [weak self] error in
             guard let error, let self else { return }
-            Task { await self.failFromTransport(error) }
+            Task { await self.failFromTransport(error, on: task) }
         }
     }
 
@@ -308,8 +324,10 @@ actor GPTLiveReader {
         }
     }
 
-    private func failFromTransport(_ error: Error) {
-        if (task?.response as? HTTPURLResponse)?.statusCode == 401 {
+    /// An error from a socket that was already replaced (after a reconnect) is ignored.
+    private func failFromTransport(_ error: Error, on task: URLSessionWebSocketTask) {
+        guard self.task === task else { return }
+        if (task.response as? HTTPURLResponse)?.statusCode == 401 {
             fail(GPTLiveError.unauthorized)
         } else {
             fail(GPTLiveError.connection(error.localizedDescription))
