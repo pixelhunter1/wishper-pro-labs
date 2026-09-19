@@ -230,12 +230,14 @@ enum TranslatedVideoExporter {
         else { throw TranslatedVideoError.failed("sem memória para o áudio") }
         var position = 0
         while position < total {
+            // Quitting cancels the translation; the mix stops at the next 100 ms.
+            try Task.checkCancellation()
             let count = min(chunk, total - position)
             buffer.frameLength = AVAudioFrameCount(count)
             let left = channels[0]
             let right = channels[1]
             if let macSound {
-                macSound.fill(left, right, count: count)
+                try macSound.fill(left, right, count: count)
             } else {
                 left.update(repeating: 0, count: count)
                 right.update(repeating: 0, count: count)
@@ -335,6 +337,7 @@ enum TranslatedVideoExporter {
         if end.seconds > time { samples.append(("", time, end.seconds)) }
         for sample in samples {
             while !input.isReadyForMoreMediaData {
+                guard writer.status == .writing else { throw writer.error ?? TranslatedVideoError.failed("legendas") }
                 try await Task.sleep(for: .milliseconds(5))
             }
             guard let buffer = textSample(sample.text, from: sample.start, to: sample.end, format: format),
@@ -533,14 +536,19 @@ private final class MacSoundReader {
         guard reader.startReading() else { throw reader.error ?? TranslatedVideoError.unreadable }
     }
 
-    /// Writes the next `count` frames (silence after the end).
-    func fill(_ leftOut: UnsafeMutablePointer<Float>, _ rightOut: UnsafeMutablePointer<Float>, count: Int) {
+    /// Writes the next `count` frames (silence after the end). A track that can't be read is an error, not silence.
+    func fill(_ leftOut: UnsafeMutablePointer<Float>, _ rightOut: UnsafeMutablePointer<Float>, count: Int) throws {
         while left.count < count, !isDone {
-            guard let sample = output.copyNextSampleBuffer(), let buffer = ScreenRecorder.pcmBuffer(sample),
-                  let channels = buffer.floatChannelData
-            else {
+            guard let sample = output.copyNextSampleBuffer() else {
+                if reader.status == .failed {
+                    throw reader.error ?? TranslatedVideoError.failed("não foi possível ler o som do Mac")
+                }
                 isDone = true
                 break
+            }
+            if sample.numSamples == 0 { continue }
+            guard let buffer = ScreenRecorder.pcmBuffer(sample), let channels = buffer.floatChannelData else {
+                throw TranslatedVideoError.failed("não foi possível ler o som do Mac")
             }
             let frames = Int(buffer.frameLength)
             left += UnsafeBufferPointer(start: channels[0], count: frames)

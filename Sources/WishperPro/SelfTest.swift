@@ -1231,6 +1231,19 @@ enum SelfTest {
                     check(levels[0] > -30 && levels[1] < -60, "vídeo traduzido: a voz está no tempo da frase (\(format(levels[0])) e \(format(levels[1])) dBFS)")
                 }
             }
+            // With the Mac's sound: it plays under the whole video, the reading on top.
+            let withSound = try await writeRecording(voice: true, systemAudio: true)
+            defer { try? FileManager.default.removeItem(at: withSound) }
+            let mixed = FileManager.default.temporaryDirectory.appendingPathComponent("wishper-selftest-\(UUID().uuidString).mp4")
+            defer { try? FileManager.default.removeItem(at: mixed) }
+            try await TranslatedVideoExporter.export(original: withSound, phrases: phrases, subtitles: .off, to: mixed)
+            let mixedAsset = AVURLAsset(url: mixed)
+            if let track = try await mixedAsset.loadTracks(withMediaType: .audio).first {
+                let levels = try await audioLevels(mixedAsset, track: track, windows: [(1.3, 1.9)])
+                check(levels[0] > -40, "vídeo traduzido: o som do Mac fica por baixo do vídeo todo (\(format(levels[0])) dBFS)")
+            } else {
+                check(false, "vídeo traduzido: o som do Mac fica por baixo do vídeo todo (sem faixa de áudio)")
+            }
         } catch {
             check(false, "vídeo traduzido: exportar (\(error.localizedDescription))")
         }
@@ -1251,14 +1264,12 @@ enum SelfTest {
         reader.startReading()
         var samples: [Float] = []
         while let buffer = output.copyNextSampleBuffer(), let block = buffer.dataBuffer {
-            var length = 0
-            var pointer: UnsafeMutablePointer<CChar>?
-            CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer)
-            if let pointer {
-                pointer.withMemoryRebound(to: Float.self, capacity: length / 4) {
-                    samples += UnsafeBufferPointer(start: $0, count: length / 4)
-                }
+            // Copied, not pointed at: a block buffer need not be contiguous.
+            var chunk = [Float](repeating: 0, count: CMBlockBufferGetDataLength(block) / 4)
+            chunk.withUnsafeMutableBytes { raw in
+                _ = CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: raw.count, destination: raw.baseAddress!)
             }
+            samples += chunk
         }
         return windows.map { window in
             let slice = samples[min(samples.count, Int(window.0 * 48_000))..<min(samples.count, Int(window.1 * 48_000))]
