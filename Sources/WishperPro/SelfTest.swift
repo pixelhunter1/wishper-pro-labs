@@ -92,6 +92,8 @@ enum SelfTest {
         checkPhraseDetector()
         checkNarrationRequest()
         checkLiveReaderProtocol()
+        checkVoicePlacement()
+        checkSubtitleCues()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -1088,6 +1090,39 @@ enum SelfTest {
         } catch {
             check(error is CancellationError, "GPT-Live: depois de fechar, uma leitura não volta a ligar")
         }
+    }
+
+    private static func checkVoicePlacement() {
+        check(
+            VoicePlacement.place([(1, 2), (5, 2)], end: 10) == [.init(start: 1, rate: 1), .init(start: 5, rate: 1)],
+            "encaixe: o que cabe fica no início da frase, a 1×"
+        )
+        let faster = VoicePlacement.place([(1, 4.4), (5, 1)], end: 10)
+        check(
+            faster[0].start == 1 && abs(faster[0].rate - 4.4 / 3.92) < 0.001 && faster[1] == .init(start: 5, rate: 1),
+            "encaixe: até 25% a mais acelera, e a seguinte fica no sítio"
+        )
+        let late = VoicePlacement.place([(1, 6), (5, 1), (9, 1)], end: 12)
+        check(
+            late[0].rate == VoicePlacement.maxRate && abs(late[1].start - 5.8) < 0.001 && late[2] == .init(start: 9, rate: 1),
+            "encaixe: o que não cabe atrasa a seguinte, e o atraso some na pausa"
+        )
+    }
+
+    private static func checkSubtitleCues() {
+        check(SubtitleCues.make([("Hello there.", 2, 2.4)]) == [SubtitleCue(start: 2, end: 3, text: "Hello there.")], "legendas: uma frase curta fica 1 s")
+        let text = "And I want to understand whether it is better to develop here in Xcode or continue here in the Claude app, since Xcode is native."
+        let long = SubtitleCues.make([(text, 10, 17)])
+        let lines = long.map { $0.text.split(separator: "\n") }
+        check(
+            long.count == 2 && lines.allSatisfy { $0.count <= 2 && $0.allSatisfy { $0.count <= SubtitleCues.lineLength } },
+            "legendas: uma frase longa dá 2 legendas de até 2 linhas de 42 caracteres"
+        )
+        check(
+            long.count == 2 && long[0].start == 10 && abs(long[1].end - 17) < 0.001 && long[0].end == long[1].start,
+            "legendas: o tempo da frase reparte-se sem buracos"
+        )
+        check(SubtitleCues.make([("One.", 1, 1.3), ("Two.", 1.8, 3)])[0].end == 1.8, "legendas: uma legenda não entra na seguinte")
     }
 
     private static func checkWordOverlap() {
