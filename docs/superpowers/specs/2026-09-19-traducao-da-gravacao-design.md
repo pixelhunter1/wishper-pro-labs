@@ -158,7 +158,8 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
 `~/Movies/Wishper Pro/Gravação 2026-09-19 às 14.32.10 (Inglês).mp4`, ao lado do original `.mov`.
 
 - **Vídeo:** copiado do original sem voltar a codificar. Com as legendas na imagem, é recodificado em H.264, com o
-  mesmo tamanho e a mesma cadência.
+  mesmo tamanho, a 30 imagens por segundo (um ecrã parado tem poucas imagens, e cada legenda tem de aparecer e sair a
+  tempo).
 - **Áudio:** uma faixa AAC de 48 kHz em estéreo, com a voz traduzida ao centro misturada com o som do Mac, quando foi
   gravado. A voz original não entra, porque fica no `.mov`.
 - **Legendas "No leitor":** uma faixa de legendas (`tx3g`) ativa.

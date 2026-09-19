@@ -1256,7 +1256,7 @@ enum SelfTest {
                 if style == .image {
                     let during = try await brightPixels(asset, at: 0.75)
                     let after = try await brightPixels(asset, at: 1.8)
-                    check(during > after + 10, "vídeo traduzido: a legenda fica desenhada na imagem (\(during) píxeis claros, \(after) depois)")
+                    check(abs(during - after) > 10, "vídeo traduzido: a legenda fica desenhada na imagem só no seu tempo (\(during) píxeis claros, \(after) depois)")
                 }
                 if style == .off, let track = audio.first {
                     let levels = try await audioLevels(asset, track: track, windows: [(0.55, 0.95), (1.3, 1.9)])

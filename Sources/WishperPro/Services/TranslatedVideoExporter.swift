@@ -445,6 +445,10 @@ enum TranslatedVideoExporter {
     /// Subtitles drawn into the picture: white text on a dark box, centred near the bottom, 4.5% of the height.
     private static func drawnSubtitles(_ cues: [SubtitleCue], over composition: AVComposition, size: CGSize) async throws -> AVVideoComposition {
         let videoComposition = try await AVMutableVideoComposition.videoComposition(withPropertiesOf: composition)
+        // 30 fps whatever the recording's own frames: a still screen has few, and each subtitle must still come and go
+        // on time.
+        videoComposition.sourceTrackIDForFrameTiming = kCMPersistentTrackID_Invalid
+        videoComposition.frameDuration = CMTime(value: 1, timescale: 30)
         let parent = CALayer()
         parent.frame = CGRect(origin: .zero, size: size)
         let videoLayer = CALayer()
