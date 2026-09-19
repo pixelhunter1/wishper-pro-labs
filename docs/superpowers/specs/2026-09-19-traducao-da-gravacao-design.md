@@ -114,6 +114,8 @@ Traduzir para        ▸  ✓ Não traduzir
   seguintes.
 - O submenu fica desativado durante uma gravação, tal como Microfone e Som do Mac, e também com "Sem microfone",
   porque não há voz para traduzir.
+- Durante a tradução, o item "Gravar ecrã…" diz "Cancelar tradução": para a tradução, mostra o original no Finder e
+  volta ao início.
 - A língua de origem é a língua do ditado (Definições › Ditado). Em Auto, a transcrição deteta a língua.
 
 ### Bolha
@@ -182,8 +184,8 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
    2. traduzir;
    3. ler com a GPT-Live.
 
-   A transcrição e a tradução correm em paralelo, até 3 frases de cada vez. A leitura segue a ordem das frases, numa
-   só sessão.
+   A transcrição e a tradução seguem a ordem das frases, uma de cada vez, e a leitura segue a mesma ordem, numa só
+   sessão; ler uma frase acontece ao mesmo tempo que traduzir a seguinte.
 4. **Parar.**
    1. O original fecha como na parte 1, com "A guardar…".
    2. O detetor fecha a última frase e a fase passa a `.translating`.
@@ -222,7 +224,8 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
   - devolve texto vazio para hesitações ("hum", "ãã"). Aqui um texto vazio é válido e a frase fica sem voz. O limite
     de tamanho (`accepts`) continua a valer.
 - **Repetições:** cada chamada tenta até 3 vezes, esperando 0,5 s e depois 1 s. Uma frase que falhe sai da fila e
-  volta a ser tentada uma vez depois de parar.
+  volta a ser tentada uma vez depois de parar. A última volta para na primeira frase que volta a falhar: as
+  restantes contam como por traduzir.
 
 ## Voz (`GPTLiveReader`)
 
@@ -232,7 +235,8 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
 - `read(_ text:) async throws -> Data` envia o texto e junta o áudio até a leitura acabar. Dá-se por acabada quando:
   - a transcrição da GPT-Live já tem todas as palavras do texto e passaram 300 ms sem som; ou
   - passaram 1,5 s sem som depois de haver som;
-  - ou, no máximo, ao fim de 20 s.
+  - ou, no máximo, ao fim de 25 s (uma sessão que não diz nada nesse tempo é dada como perdida e a leitura seguinte
+    volta a ligar).
 
   Devolve PCM16 a 24 kHz sem o silêncio do princípio e do fim.
 - **Confirmação:** se a transcrição não tiver pelo menos 90% das palavras do texto, a leitura repete uma vez e fica a
@@ -329,7 +333,8 @@ Entra na barra lateral a seguir a "Bolha", com o símbolo `record.circle`.
 | Nenhuma frase traduzida (sem rede, key inválida) | "Tradução falhou: <motivo>. A gravação original ficou guardada." |
 | Nenhuma fala detetada | "Não ouvi nenhuma frase para traduzir." Só o original fica. |
 | Erro ao exportar | "Não foi possível criar o vídeo traduzido: <motivo>. A gravação original ficou guardada." |
-| Sair durante a tradução | A tradução é cancelada e o original fica. |
+| Cancelar tradução no menu | A tradução para; o original fica e aparece no Finder. |
+| Sair durante a tradução | A tradução é cancelada, o original fica e não fica nenhum vídeo a meio. |
 
 ## Ficheiros
 

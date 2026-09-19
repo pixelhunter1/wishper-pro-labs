@@ -32,7 +32,7 @@ Hold a hotkey, speak, and the words land in whatever app you are in: cleaned up,
 - **Your clipboard survives.** What you had copied is put back after the paste, and the pasted text is marked as transient so clipboard managers skip it.
 - **Push-to-talk or hands-free.** Hold the hotkey to talk, or tap it once to keep recording and again to stop. `Esc` cancels.
 - **Screen recording (macOS 15+).** Record a display, a window or an app picked in the system picker, with the microphone you choose and, if you want, the Mac's sound. No Screen Recording permission is needed, the bubble never shows in the video, and your voice goes in its own track on the video's clock.
-- **Translated screen recordings.** Pick a language in **Traduzir para** before recording. While you talk, each phrase is transcribed, translated with your dictionary and read aloud by a GPT-Live voice; a few seconds after you stop, a second video (`… (Inglês).mp4`) has the translated voice starting at the second each phrase was said, the Mac's sound, and subtitles in the player, drawn into the picture, or none. Choose among 22 voices, with a sample, in Settings → Gravação.
+- **Translated screen recordings.** Pick a language in **Traduzir para** before recording. While you talk, each phrase is transcribed, translated with your dictionary and read aloud by a GPT-Live voice; shortly after you stop, a second video (`… (Inglês).mp4`) has the translated voice starting at the second each phrase was said, the Mac's sound, and subtitles in the player, drawn into the picture, or none. Choose among 22 voices, with a sample, in Settings → Gravação.
 - **A menu bar app.** No Dock icon by default, native Settings with a Finder-style sidebar, follows light and dark mode, and supports VoiceOver, Reduce Motion, Reduce Transparency and Increase Contrast.
 - **No backend.** Dictation audio never touches the disk, the API key lives in the Keychain, and settings live in UserDefaults.
 
@@ -116,7 +116,7 @@ Settings open by themselves while anything is missing:
 
 To record the screen, open the menu bar menu and choose **Gravar ecrã…**, then pick a display, a window or an app. After a 3-2-1 countdown the bubble shows the time; choose **Parar gravação** in the menu, or press **Control-Command-Esc**, to stop. The file lands in `~/Movies/Wishper Pro` and Finder shows it. **Microfone** and **Som do Mac** in the same menu set what the next recording captures.
 
-To translate a recording, choose a language in **Traduzir para** in the same menu before you record. When you stop, the original is saved as usual and, a few seconds later, the translated video appears next to it in Finder. The voice and the subtitles are set in Settings → Gravação; the spoken language is the dictation language (Settings → Ditado).
+To translate a recording, choose a language in **Traduzir para** in the same menu before you record. When you stop, the original is saved as usual and, shortly after, the translated video appears next to it in Finder. The voice and the subtitles are set in Settings → Gravação; the spoken language is the dictation language (Settings → Ditado). While it is being prepared, **Cancelar tradução** in the same menu stops it and keeps the original.
 
 ## Settings
 
@@ -137,7 +137,7 @@ Open them with **⌘,** or from the menu bar. The sidebar lists these pages; the
 | Model | Used for | Price |
 |---|---|---|
 | `gpt-live-transcribe` | live dictation | $0.017 / min |
-| `gpt-transcribe` | fallback when the live connection fails | $0.0045 / min |
+| `gpt-transcribe` | fallback when the live connection fails, and each phrase of a translated recording | $0.0045 / min |
 | `gpt-5.6-luna` | cleanup, style and translation | ≈ $0.0002 per dictation |
 | `gpt-live-1` | the translated recording's voice | $0.05 / min while recording |
 
