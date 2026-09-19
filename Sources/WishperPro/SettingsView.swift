@@ -25,6 +25,7 @@ extension Bundle {
 
 struct SettingsView: View {
     @ObservedObject var viewModel: VoicePasteViewModel
+    @ObservedObject var recording: RecordingController
     @State private var pane = SettingsPane.general
     @FocusState private var sidebarFocused: Bool
 
@@ -35,6 +36,9 @@ struct SettingsView: View {
                 row(.general)
                 row(.dictation)
                 row(.bubble)
+                if RecordingController.isSupported {
+                    row(.recording)
+                }
                 Section("Texto") {
                     row(.styles)
                     row(.dictionary)
@@ -97,6 +101,7 @@ struct SettingsView: View {
         case .general: GeneralPane(viewModel: viewModel)
         case .dictation: DictationPane(viewModel: viewModel)
         case .bubble: BubblePane(viewModel: viewModel)
+        case .recording: RecordingPane(recording: recording, viewModel: viewModel)
         case .styles: StylesPane(settings: viewModel.textSettings)
         case .dictionary: DictionaryPane(settings: viewModel.textSettings)
         case .translation: TranslationPane(viewModel: viewModel)
@@ -105,13 +110,14 @@ struct SettingsView: View {
 }
 
 private enum SettingsPane {
-    case general, dictation, bubble, styles, dictionary, translation
+    case general, dictation, bubble, recording, styles, dictionary, translation
 
     var title: String {
         switch self {
         case .general: return "Geral"
         case .dictation: return "Ditado"
         case .bubble: return "Bolha"
+        case .recording: return "Gravação"
         case .styles: return "Estilos"
         case .dictionary: return "Dicionário"
         case .translation: return "Tradução"
@@ -123,6 +129,7 @@ private enum SettingsPane {
         case .general: return "gearshape"
         case .dictation: return "mic"
         case .bubble: return "text.bubble"
+        case .recording: return "record.circle"
         case .styles: return "wand.and.stars"
         case .dictionary: return "character.book.closed"
         case .translation: return "translate"
@@ -474,6 +481,98 @@ private struct TranslationPane: View {
             }
         }
         .formStyle(.grouped)
+    }
+}
+
+/// The screen recording's translated voice and subtitles. The language is chosen in the menu, per recording.
+private struct RecordingPane: View {
+    @ObservedObject var recording: RecordingController
+    @ObservedObject var viewModel: VoicePasteViewModel
+    @StateObject private var preview = VoicePreviewPlayer()
+
+    var body: some View {
+        let apiKey = viewModel.recordingTranslationContext?.apiKey
+        Form {
+            Section {
+                Picker("Voz", selection: $recording.voiceID) {
+                    Section("GPT-Live") {
+                        ForEach(LiveVoice.all.filter { $0.accent != nil }) { voice in
+                            Text(voice.label).tag(voice.id)
+                        }
+                    }
+                    Section("Outras vozes da OpenAI") {
+                        ForEach(LiveVoice.all.filter { $0.accent == nil }) { voice in
+                            Text(voice.label).tag(voice.id)
+                        }
+                    }
+                }
+                LabeledContent("Amostra") {
+                    HStack(spacing: 8) {
+                        if preview.isLoading {
+                            ProgressView()
+                                .controlSize(.small)
+                        }
+                        Button("Ouvir") {
+                            guard let apiKey else { return }
+                            preview.play(
+                                voice: recording.voiceID,
+                                language: SupportedLanguage(rawValue: recording.translationLanguage) ?? .english,
+                                apiKey: apiKey
+                            )
+                        }
+                        .disabled(apiKey == nil || preview.isLoading)
+                    }
+                }
+                if let error = preview.error {
+                    Text(error)
+                        .foregroundStyle(.red)
+                }
+            } header: {
+                Text("Voz traduzida")
+            } footer: {
+                Text(apiKey == nil
+                    ? "Precisa da API key (Geral)."
+                    : "Vozes da OpenAI (GPT-Live). A língua escolhe-se no menu, em Traduzir para.")
+            }
+
+            Section {
+                Picker("Legendas", selection: $recording.subtitles) {
+                    ForEach(SubtitleStyle.allCases) { style in
+                        Text(style.title).tag(style)
+                    }
+                }
+                .pickerStyle(.radioGroup)
+            } footer: {
+                Text(recording.subtitles.detail)
+            }
+        }
+        .formStyle(.grouped)
+        .disabled(recording.phase.isBusy)
+    }
+}
+
+/// Plays a voice's sample in the Settings; the first listen of each voice and language reads it with GPT-Live.
+@MainActor
+private final class VoicePreviewPlayer: ObservableObject {
+    @Published private(set) var isLoading = false
+    @Published private(set) var error: String?
+    private var player: AVAudioPlayer?
+
+    func play(voice: String, language: SupportedLanguage, apiKey: String) {
+        player?.stop()
+        error = nil
+        isLoading = true
+        Task {
+            defer { isLoading = false }
+            do {
+                let url = try await VoicePreview.sample(voice: voice, language: language, apiKey: apiKey)
+                let player = try AVAudioPlayer(contentsOf: url)
+                player.play()
+                self.player = player
+            } catch {
+                self.error = "Não foi possível ouvir a voz: \(ScreenRecordingError.reason(error))."
+            }
+        }
     }
 }
 

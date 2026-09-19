@@ -16,7 +16,7 @@ struct WishperProApp: App {
         // one-row toolbar and a sidebar whose corners are concentric with the window's. Opening it
         // by value keeps it to one window.
         WindowGroup("Definições", id: SettingsOpener.windowID, for: String.self) { _ in
-            SettingsView(viewModel: appDelegate.viewModel)
+            SettingsView(viewModel: appDelegate.viewModel, recording: appDelegate.recording)
         }
         .windowResizability(.contentSize)
         .commandsRemoved()
