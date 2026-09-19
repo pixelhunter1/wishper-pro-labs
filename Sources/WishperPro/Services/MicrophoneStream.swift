@@ -97,7 +97,7 @@ final class PCMConverter {
 }
 
 /// Hands one buffer to AVAudioConverter's input block exactly once.
-private final class PendingBuffer: @unchecked Sendable {
+final class PendingBuffer: @unchecked Sendable {
     private var buffer: AVAudioPCMBuffer?
 
     init(_ buffer: AVAudioPCMBuffer) {

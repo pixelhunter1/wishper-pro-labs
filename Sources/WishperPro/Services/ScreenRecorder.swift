@@ -219,7 +219,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         return sample.imageBuffer
     }
 
-    private static func pcmBuffer(_ sample: CMSampleBuffer) -> AVAudioPCMBuffer? {
+    /// A sample buffer's audio as a PCM buffer in its own format (also reads the Mac's sound for the translated video).
+    static func pcmBuffer(_ sample: CMSampleBuffer) -> AVAudioPCMBuffer? {
         guard let description = sample.formatDescription,
               let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description),
               let format = AVAudioFormat(streamDescription: streamDescription)

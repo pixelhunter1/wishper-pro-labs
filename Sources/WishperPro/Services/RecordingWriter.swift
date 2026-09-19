@@ -31,11 +31,21 @@ enum RecordingFile {
         let formatter = DateFormatter()
         formatter.locale = Locale(identifier: "pt_PT")
         formatter.dateFormat = "yyyy-MM-dd 'às' HH.mm.ss"
-        let base = "Gravação \(formatter.string(from: date))"
-        var url = folder.appendingPathComponent("\(base).mov")
+        return available("Gravação \(formatter.string(from: date))", pathExtension: "mov", in: folder)
+    }
+
+    /// "Gravação … (Inglês).mp4" next to the original, with " 2", " 3"… when the name is taken.
+    static func translatedURL(for original: URL, language: SupportedLanguage) -> URL {
+        let base = "\(original.deletingPathExtension().lastPathComponent) (\(language.displayName))"
+        return available(base, pathExtension: "mp4", in: original.deletingLastPathComponent())
+    }
+
+    /// `base.ext` in `folder`, or `base 2.ext`, `base 3.ext`… when the name is taken.
+    private static func available(_ base: String, pathExtension: String, in folder: URL) -> URL {
+        var url = folder.appendingPathComponent("\(base).\(pathExtension)")
         var number = 2
         while FileManager.default.fileExists(atPath: url.path) {
-            url = folder.appendingPathComponent("\(base) \(number).mov")
+            url = folder.appendingPathComponent("\(base) \(number).\(pathExtension)")
             number += 1
         }
         return url

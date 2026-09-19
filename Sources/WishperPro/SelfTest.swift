@@ -94,12 +94,16 @@ enum SelfTest {
         checkLiveReaderProtocol()
         checkVoicePlacement()
         checkSubtitleCues()
+        checkTranslatedFileName()
     }
 
     private static func runAsyncOfflineChecks() async {
         await checkLiveReaderClosed()
         await checkRecordingWriter()
         await checkTranslator()
+        if #available(macOS 15, *) {
+            await checkTranslatedExport()
+        }
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -1184,6 +1188,83 @@ enum SelfTest {
                 && refusal.firstError.map(RecordingTranslator.isRefusal) == true,
             "tradutor: uma key recusada não volta a ser usada (\(transcriptions.all.count) chamada)"
         )
+    }
+
+    private static func checkTranslatedFileName() {
+        let folder = FileManager.default.temporaryDirectory
+            .appendingPathComponent("wishper-selftest-\(UUID().uuidString)", isDirectory: true)
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: folder) }
+        let original = folder.appendingPathComponent("Gravação 2026-09-19 às 14.32.10.mov")
+        let first = RecordingFile.translatedURL(for: original, language: .english)
+        check(first.lastPathComponent == "Gravação 2026-09-19 às 14.32.10 (Inglês).mp4", "tradução: o vídeo traduzido fica ao lado, com a língua no nome")
+        FileManager.default.createFile(atPath: first.path, contents: Data())
+        check(
+            RecordingFile.translatedURL(for: original, language: .english).lastPathComponent == "Gravação 2026-09-19 às 14.32.10 (Inglês) 2.mp4",
+            "tradução: nome ocupado ganha \" 2\""
+        )
+    }
+
+    /// The translated video from a synthetic 2 s recording, with each subtitle style.
+    @available(macOS 15, *)
+    private static func checkTranslatedExport() async {
+        do {
+            let original = try await writeRecording(voice: true, systemAudio: false)
+            defer { try? FileManager.default.removeItem(at: original) }
+            let reading = syntheticVoice([(0.5, true)], speech: -20, noise: -90)
+            let phrases = [TranslatedPhrase(start: 0.5, end: 1.0, text: "Hello there, this is a test.", audio: reading)]
+            for style in SubtitleStyle.allCases {
+                let output = FileManager.default.temporaryDirectory.appendingPathComponent("wishper-selftest-\(UUID().uuidString).mp4")
+                defer { try? FileManager.default.removeItem(at: output) }
+                try await TranslatedVideoExporter.export(original: original, phrases: phrases, subtitles: style, to: output)
+                let asset = AVURLAsset(url: output)
+                let video = try await asset.loadTracks(withMediaType: .video).count
+                let audio = try await asset.loadTracks(withMediaType: .audio)
+                let subtitles = try await asset.loadTracks(withMediaType: .subtitle).count
+                let duration = try await asset.load(.duration).seconds
+                check(
+                    video == 1 && audio.count == 1 && subtitles == (style == .player ? 1 : 0) && abs(duration - 2) <= 0.1,
+                    "vídeo traduzido (\(style.title)): 1 vídeo, 1 áudio, \(subtitles) legendas, \(format(duration)) s"
+                )
+                if style == .off, let track = audio.first {
+                    let levels = try await audioLevels(asset, track: track, windows: [(0.55, 0.95), (1.3, 1.9)])
+                    check(levels[0] > -30 && levels[1] < -60, "vídeo traduzido: a voz está no tempo da frase (\(format(levels[0])) e \(format(levels[1])) dBFS)")
+                }
+            }
+        } catch {
+            check(false, "vídeo traduzido: exportar (\(error.localizedDescription))")
+        }
+    }
+
+    /// RMS in dBFS of an audio track within each time window.
+    private static func audioLevels(_ asset: AVAsset, track: AVAssetTrack, windows: [(Double, Double)]) async throws -> [Double] {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+            AVFormatIDKey: kAudioFormatLinearPCM,
+            AVSampleRateKey: 48_000,
+            AVNumberOfChannelsKey: 1,
+            AVLinearPCMBitDepthKey: 32,
+            AVLinearPCMIsFloatKey: true,
+            AVLinearPCMIsNonInterleaved: false,
+        ])
+        reader.add(output)
+        reader.startReading()
+        var samples: [Float] = []
+        while let buffer = output.copyNextSampleBuffer(), let block = buffer.dataBuffer {
+            var length = 0
+            var pointer: UnsafeMutablePointer<CChar>?
+            CMBlockBufferGetDataPointer(block, atOffset: 0, lengthAtOffsetOut: nil, totalLengthOut: &length, dataPointerOut: &pointer)
+            if let pointer {
+                pointer.withMemoryRebound(to: Float.self, capacity: length / 4) {
+                    samples += UnsafeBufferPointer(start: $0, count: length / 4)
+                }
+            }
+        }
+        return windows.map { window in
+            let slice = samples[min(samples.count, Int(window.0 * 48_000))..<min(samples.count, Int(window.1 * 48_000))]
+            let power = slice.reduce(0) { $0 + Double($1) * Double($1) } / Double(max(slice.count, 1))
+            return 10 * log10(max(power, 1e-10))
+        }
     }
 
     private static func checkWordOverlap() {
