@@ -109,7 +109,7 @@ final class FloatingBubbleController {
                 isVisible = false
             case .failed:
                 isVisible = true
-            case .countdown, .recording, .saving, .saved:
+            case .countdown, .recording, .saving, .saved, .translating, .translated:
                 isVisible = viewModel.bubbleMode != .hidden
             }
         }
@@ -161,9 +161,13 @@ final class FloatingBubbleController {
             post("A gravar")
         case .saved:
             post("Gravação guardada")
+        case .translating(nil):
+            post("A preparar o vídeo traduzido")
+        case .translated:
+            post("Vídeo traduzido guardado")
         case .failed(let text):
             post(text)
-        case .idle, .choosing, .countdown, .saving:
+        case .idle, .choosing, .countdown, .saving, .translating:
             return
         }
     }

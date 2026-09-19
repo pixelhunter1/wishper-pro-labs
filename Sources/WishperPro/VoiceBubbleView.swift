@@ -150,6 +150,24 @@ struct RecordingBubbleView: View {
                 .foregroundStyle(.green)
             Text("Gravação guardada")
                 .font(.callout.weight(.medium))
+        case .translating(let progress):
+            ProgressView()
+                .controlSize(.small)
+            Text("A preparar o vídeo traduzido…" + (progress.map { " \(Int(($0 * 100).rounded()))%" } ?? ""))
+                .font(.callout.weight(.medium))
+                .monospacedDigit()
+        case .translated(_, let missing):
+            Image(systemName: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Vídeo traduzido guardado")
+                    .font(.callout.weight(.medium))
+                if missing > 0 {
+                    Text(Self.missingText(missing))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         case .failed(let message):
             Image(systemName: "xmark.octagon.fill")
                 .foregroundStyle(.red)
@@ -171,11 +189,19 @@ struct RecordingBubbleView: View {
             return "Wishper Pro, a guardar a gravação"
         case .saved:
             return "Wishper Pro, gravação guardada"
+        case .translating:
+            return "Wishper Pro, a preparar o vídeo traduzido"
+        case .translated(_, let missing):
+            return "Wishper Pro, vídeo traduzido guardado" + (missing > 0 ? ". \(Self.missingText(missing))" : "")
         case .failed(let message):
             return "Wishper Pro, \(message)"
         case .idle, .choosing:
             return "Wishper Pro"
         }
+    }
+
+    static func missingText(_ count: Int) -> String {
+        count == 1 ? "1 frase ficou por traduzir." : "\(count) frases ficaram por traduzir."
     }
 }
 

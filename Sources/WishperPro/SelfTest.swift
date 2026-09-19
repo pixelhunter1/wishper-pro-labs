@@ -95,6 +95,7 @@ enum SelfTest {
         checkVoicePlacement()
         checkSubtitleCues()
         checkTranslatedFileName()
+        checkTranslationPhases()
     }
 
     private static func runAsyncOfflineChecks() async {
@@ -1276,6 +1277,27 @@ enum SelfTest {
             let power = slice.reduce(0) { $0 + Double($1) * Double($1) } / Double(max(slice.count, 1))
             return 10 * log10(max(power, 1e-10))
         }
+    }
+
+    private static func checkTranslationPhases() {
+        let file = URL(fileURLWithPath: "/tmp/gravação (Inglês).mp4")
+        let phases: [RecordingPhase] = [.translating(nil), .translating(0.4), .translated(file, missing: 0)]
+        check(
+            phases.map(\.menuTitle) == ["A traduzir…", "A traduzir…", "Gravar ecrã…"]
+                && phases.map(\.acceptsMenuAction) == [false, false, true]
+                && phases.map(\.isBusy) == [true, true, false]
+                && phases.allSatisfy(\.showsBubble)
+                && !phases.contains(where: \.acceptsStopShortcut),
+            "tradução: a traduzir, o menu e as definições esperam; depois pode gravar-se outra vez"
+        )
+        check(
+            ScreenRecordingError.translationFailed("a API key é inválida").localizedDescription
+                == "Tradução falhou: a API key é inválida. A gravação original ficou guardada."
+                && ScreenRecordingError.exportFailed("disco cheio").localizedDescription
+                == "Não foi possível criar o vídeo traduzido: disco cheio. A gravação original ficou guardada."
+                && ScreenRecordingError.nothingToTranslate.localizedDescription == "Não ouvi nenhuma frase para traduzir.",
+            "tradução: mensagens de falha"
+        )
     }
 
     private static func checkWordOverlap() {

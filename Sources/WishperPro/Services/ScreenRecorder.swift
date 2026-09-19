@@ -30,6 +30,9 @@ enum ScreenRecordingError: LocalizedError {
     case startFailed(String)
     case interrupted(String)
     case contentClosed
+    case translationFailed(String)
+    case nothingToTranslate
+    case exportFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -41,6 +44,12 @@ enum ScreenRecordingError: LocalizedError {
             return "Gravação interrompida: \(reason). O que foi gravado ficou guardado."
         case .contentClosed:
             return "A janela ou a app gravada fechou."
+        case .translationFailed(let reason):
+            return "Tradução falhou: \(reason). A gravação original ficou guardada."
+        case .nothingToTranslate:
+            return "Não ouvi nenhuma frase para traduzir."
+        case .exportFailed(let reason):
+            return "Não foi possível criar o vídeo traduzido: \(reason). A gravação original ficou guardada."
         }
     }
 
@@ -58,8 +67,11 @@ enum ScreenRecordingError: LocalizedError {
 /// The stream starts at once so the microphone warms up, but nothing is written until `beginWriting()`.
 @available(macOS 15, *)
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
-    /// Microphone audio as 100 ms PCM16 24 kHz chunks and their level: the bubble now, live translation in part 2.
+    /// Microphone audio as 100 ms PCM16 24 kHz chunks and their level, for the bubble.
     var onMicrophone: (@Sendable (Data, Double) -> Void)?
+    /// Each microphone block as PCM16 24 kHz, with when it was written in seconds since time zero, for the translation.
+    /// The time is nil before time zero (the countdown) and for a block the file dropped.
+    var onVoice: (@Sendable (Data, TimeInterval?) -> Void)?
     /// The stream ended by itself: `nil` when the person stopped it from the system's menu, otherwise why (the
     /// recorded window or app closed, the stream failed, a write failed). The owner then closes the file with
     /// `stop()` — or drops it with `cancel()` before time zero — so the file has a single closer.
@@ -72,7 +84,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var stream: SCStream?
     // Touched only on `queue`, where every sample arrives in order.
     private let queue = DispatchQueue(label: "com.wishper.pro.screen-recorder")
-    private var levelConverter: PCMConverter?
+    private var pcmConverter: PCMConverter?
     private var pendingLevel = Data()
     private var isClosed = false
     private var reportedFailure = false
@@ -151,8 +163,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
             writer.appendSystemAudio(sample)
         case .microphone:
             guard let buffer = Self.pcmBuffer(sample) else { return }
-            writer.appendVoice(buffer, at: sample.presentationTimeStamp)
-            reportLevel(buffer)
+            let written = writer.appendVoice(buffer, at: sample.presentationTimeStamp)
+            deliverMicrophone(buffer, writtenAt: written)
         @unknown default:
             break
         }
@@ -195,13 +207,16 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         }
     }
 
-    /// Same 100 ms PCM16 24 kHz chunks as the dictation microphone; a new converter when the format changes.
-    private func reportLevel(_ buffer: AVAudioPCMBuffer) {
-        if levelConverter?.inputFormat != buffer.format {
-            levelConverter = PCMConverter(from: buffer.format)
+    /// The microphone as PCM16 24 kHz (the transcription's format): each block to `onVoice`, and the same 100 ms
+    /// chunks as the dictation microphone to `onMicrophone`. A new converter when the format changes.
+    private func deliverMicrophone(_ buffer: AVAudioPCMBuffer, writtenAt time: TimeInterval?) {
+        if pcmConverter?.inputFormat != buffer.format {
+            pcmConverter = PCMConverter(from: buffer.format)
         }
-        guard let levelConverter else { return }
-        pendingLevel.append(levelConverter.convert(buffer))
+        guard let pcmConverter else { return }
+        let pcm = pcmConverter.convert(buffer)
+        onVoice?(pcm, time)
+        pendingLevel.append(pcm)
         while pendingLevel.count >= PCM16.chunkBytes {
             let chunk = Data(pendingLevel.prefix(PCM16.chunkBytes))
             pendingLevel = Data(pendingLevel.dropFirst(PCM16.chunkBytes))

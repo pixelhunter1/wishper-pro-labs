@@ -10,6 +10,10 @@ enum RecordingPhase: Equatable {
     case recording(since: Date)
     case saving
     case saved(URL)
+    /// The translated video is being made; the export's progress when it is known.
+    case translating(Double?)
+    /// The translated video is saved; `missing` phrases stayed without a voice.
+    case translated(URL, missing: Int)
     case failed(String)
 
     var menuTitle: String {
@@ -17,23 +21,24 @@ enum RecordingPhase: Equatable {
         case .countdown: return "Cancelar gravação"
         case .recording: return "Parar gravação"
         case .saving: return "A guardar…"
-        case .idle, .choosing, .saved, .failed: return "Gravar ecrã…"
+        case .translating: return "A traduzir…"
+        case .idle, .choosing, .saved, .translated, .failed: return "Gravar ecrã…"
         }
     }
 
-    /// The menu item does nothing while the picker is open or the file is being saved.
+    /// The menu item does nothing while the picker is open or the file is being saved or translated.
     var acceptsMenuAction: Bool {
         switch self {
-        case .choosing, .saving: return false
-        case .idle, .countdown, .recording, .saved, .failed: return true
+        case .choosing, .saving, .translating: return false
+        case .idle, .countdown, .recording, .saved, .translated, .failed: return true
         }
     }
 
-    /// A recording is being prepared, made or saved: the microphone and sound settings wait for the next one.
+    /// A recording is being prepared, made, saved or translated: its settings wait for the next one.
     var isBusy: Bool {
         switch self {
-        case .choosing, .countdown, .recording, .saving: return true
-        case .idle, .saved, .failed: return false
+        case .choosing, .countdown, .recording, .saving, .translating: return true
+        case .idle, .saved, .translated, .failed: return false
         }
     }
 
@@ -41,7 +46,7 @@ enum RecordingPhase: Equatable {
     var showsBubble: Bool {
         switch self {
         case .idle, .choosing: return false
-        case .countdown, .recording, .saving, .saved, .failed: return true
+        case .countdown, .recording, .saving, .saved, .translating, .translated, .failed: return true
         }
     }
 
@@ -49,7 +54,7 @@ enum RecordingPhase: Equatable {
     var acceptsStopShortcut: Bool {
         switch self {
         case .countdown, .recording: return true
-        case .idle, .choosing, .saving, .saved, .failed: return false
+        case .idle, .choosing, .saving, .saved, .translating, .translated, .failed: return false
         }
     }
 }
@@ -75,6 +80,16 @@ struct RecordingInput: Identifiable, Equatable {
 private enum RecordingDefaultsKey {
     static let microphone = "wishper.recording_microphone"
     static let systemAudio = "wishper.recording_system_audio"
+    static let translation = "wishper.recording_translation"
+    static let voice = "wishper.recording_voice"
+    static let subtitles = "wishper.recording_subtitles"
+}
+
+/// What the recording's translation takes from dictation: the API key, the dictionary and the spoken language.
+struct TranslationContext {
+    var apiKey: String
+    var dictionary: [String]
+    var source: SupportedLanguage
 }
 
 /// Screen recording from the menu: picker → countdown → recording → the file in Finder. Kept apart from
@@ -99,9 +114,21 @@ final class RecordingController: ObservableObject {
     @Published var recordsSystemAudio = UserDefaults.standard.bool(forKey: RecordingDefaultsKey.systemAudio) {
         didSet { UserDefaults.standard.set(recordsSystemAudio, forKey: RecordingDefaultsKey.systemAudio) }
     }
+    /// `""` records without translating; otherwise a `SupportedLanguage.rawValue`.
+    @Published var translationLanguage = UserDefaults.standard.string(forKey: RecordingDefaultsKey.translation) ?? "" {
+        didSet { UserDefaults.standard.set(translationLanguage, forKey: RecordingDefaultsKey.translation) }
+    }
+    @Published var voiceID = LiveVoice.stored(UserDefaults.standard.string(forKey: RecordingDefaultsKey.voice)) {
+        didSet { UserDefaults.standard.set(voiceID, forKey: RecordingDefaultsKey.voice) }
+    }
+    @Published var subtitles = SubtitleStyle(rawValue: UserDefaults.standard.string(forKey: RecordingDefaultsKey.subtitles) ?? "") ?? .player {
+        didSet { UserDefaults.standard.set(subtitles.rawValue, forKey: RecordingDefaultsKey.subtitles) }
+    }
 
     /// Windows the picker leaves out besides the app's own: the bubble. Set by the AppDelegate.
     var excludedWindowIDs: @MainActor () -> [Int] = { [] }
+    /// The translation's API key, dictionary and spoken language; nil without an API key. Set by the AppDelegate.
+    var translationContext: @MainActor () -> TranslationContext? = { nil }
 
     /// The menu's choice: a saved microphone that is not connected shows as the system default.
     var menuMicrophone: String {
@@ -119,6 +146,10 @@ final class RecordingController: ObservableObject {
     private var clock: Timer?
     private var resetTask: Task<Void, Never>?
     private var deviceObservers: [NSObjectProtocol] = []
+    /// This recording's translator and language, from the countdown until the translated video is saved.
+    private var translator: RecordingTranslator?
+    private var translationTarget: SupportedLanguage?
+    private var translationTask: Task<Void, Never>?
 
     init() {
         guard Self.isSupported else { return }
@@ -138,10 +169,10 @@ final class RecordingController: ObservableObject {
     /// The menu item: record, cancel the countdown or stop, depending on the phase.
     func toggle() {
         switch phase {
-        case .idle, .saved, .failed: choose()
+        case .idle, .saved, .translated, .failed: choose()
         case .countdown: cancel()
         case .recording: stop()
-        case .choosing, .saving: break
+        case .choosing, .saving, .translating: break
         }
     }
 
@@ -153,20 +184,25 @@ final class RecordingController: ObservableObject {
 
     /// Quitting: a recording in progress is saved, and a countdown cancelled, before the app goes.
     func finishBeforeQuit() async {
-        guard #available(macOS 15, *), let recorder = recorder as? ScreenRecorder else {
+        if #available(macOS 15, *), let recorder = recorder as? ScreenRecorder {
+            switch phase {
+            case .countdown:
+                clearRecording()
+                await recorder.cancel()
+            case .recording:
+                stop()
+                await stopTask?.value
+            default:
+                await stopTask?.value
+            }
+        } else {
             await stopTask?.value
-            return
         }
-        switch phase {
-        case .countdown:
-            clearRecording()
-            await recorder.cancel()
-        case .recording:
-            stop()
-            await stopTask?.value
-        default:
-            await stopTask?.value
-        }
+        // A translation in progress is dropped; the original recording stays.
+        translationTask?.cancel()
+        translationTask = nil
+        await translator?.cancel()
+        translator = nil
     }
 
     private func refreshMicrophones() {
@@ -254,15 +290,25 @@ final class RecordingController: ObservableObject {
         recorder.onEnded = { [weak self] error in
             Task { @MainActor in self?.ended(error) }
         }
+        let translator = makeTranslator(microphone: microphone)
+        if translator == nil, !translationLanguage.isEmpty, microphone != .off {
+            notice = "Sem API key: a gravar sem tradução."
+        }
+        if let translator {
+            recorder.onVoice = { pcm, time in translator.add(pcm, at: time) }
+        }
         do {
             try await recorder.start()
         } catch {
             await recorder.cancel()
+            await translator?.cancel()
             pickerClosed()
             fail(.startFailed(ScreenRecordingError.reason(error)))
             return
         }
         self.recorder = recorder
+        self.translator = translator
+        await translator?.start()
         stopShortcut.setStopRecordingEnabled(true)
         soundCuePlayer.playStartCue()
         countdown = Task { [weak self] in
@@ -308,9 +354,14 @@ final class RecordingController: ObservableObject {
     /// Cancelled during the countdown: nothing is kept.
     private func cancel() {
         guard #available(macOS 15, *), let recorder = recorder as? ScreenRecorder else { return }
+        let translator = translator
+        self.translator = nil
         clearRecording()
         setPhase(.idle)
-        Task { await recorder.cancel() }
+        Task {
+            await recorder.cancel()
+            await translator?.cancel()
+        }
     }
 
     /// The stream ended by itself (stopped from the system's menu, the recorded window or app closed, or a write
@@ -320,8 +371,13 @@ final class RecordingController: ObservableObject {
         switch phase {
         case .countdown:
             // Nothing was written yet.
+            let translator = translator
+            self.translator = nil
             clearRecording()
-            Task { await recorder.cancel() }
+            Task {
+                await recorder.cancel()
+                await translator?.cancel()
+            }
             if let error {
                 fail(.startFailed(ScreenRecordingError.reason(error)))
             } else {
@@ -334,10 +390,20 @@ final class RecordingController: ObservableObject {
         }
     }
 
-    /// The file is closed: shown in Finder, then "Gravação guardada" or why the recording stopped.
+    /// The file is closed: translated when asked, or shown in Finder with "Gravação guardada" or why it stopped.
     private func finish(_ url: URL, failure: Error?) {
         clearRecording()
         soundCuePlayer.playStopCue()
+        if #available(macOS 15, *), let translator, let target = translationTarget,
+           FileManager.default.fileExists(atPath: url.path) {
+            translate(url, with: translator, into: target, interruption: failure)
+            return
+        }
+        // Nothing to translate (no file): the translator started with the recording, so it stops here.
+        if let translator {
+            self.translator = nil
+            Task { await translator.cancel() }
+        }
         if FileManager.default.fileExists(atPath: url.path) {
             NSWorkspace.shared.activateFileViewerSelecting([url])
         }
@@ -345,6 +411,61 @@ final class RecordingController: ObservableObject {
             fail(.interrupted(ScreenRecordingError.reason(failure)))
         } else {
             setPhase(.saved(url))
+        }
+    }
+
+    /// A translator for this recording: when a language is chosen, the microphone is on and there is an API key.
+    private func makeTranslator(microphone: RecordingMicrophone) -> RecordingTranslator? {
+        guard let target = SupportedLanguage(rawValue: translationLanguage), microphone != .off,
+              let context = translationContext()
+        else { return nil }
+        translationTarget = target
+        return RecordingTranslator(steps: .live(
+            apiKey: context.apiKey,
+            source: context.source,
+            target: target,
+            dictionary: context.dictionary,
+            voice: voiceID
+        ))
+    }
+
+    /// After the original is saved: the last phrases, one more try for what failed, then the translated video next to
+    /// the original, shown in Finder. The original stays whatever happens.
+    @available(macOS 15, *)
+    private func translate(_ original: URL, with translator: RecordingTranslator, into target: SupportedLanguage, interruption: Error?) {
+        setPhase(.translating(nil))
+        // A recording that stopped by itself is still translated; the bubble says why it stopped.
+        notice = interruption.map { ScreenRecordingError.interrupted(ScreenRecordingError.reason($0)).localizedDescription }
+        let subtitles = subtitles
+        translationTask = Task { [weak self] in
+            let result = await translator.finish()
+            guard !Task.isCancelled, let self else { return }
+            defer {
+                self.translator = nil
+                self.translationTask = nil
+                self.notice = nil
+            }
+            guard !result.phrases.isEmpty else {
+                NSWorkspace.shared.activateFileViewerSelecting([original])
+                let error = result.firstError.map { ScreenRecordingError.translationFailed(ScreenRecordingError.reason($0)) }
+                self.fail(error ?? .nothingToTranslate)
+                return
+            }
+            let output = RecordingFile.translatedURL(for: original, language: target)
+            do {
+                try await TranslatedVideoExporter.export(original: original, phrases: result.phrases, subtitles: subtitles, to: output) { [weak self] value in
+                    Task { @MainActor in
+                        if case .translating = self?.phase { self?.phase = .translating(value) }
+                    }
+                }
+                guard !Task.isCancelled else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([output])
+                self.setPhase(.translated(output, missing: result.failed))
+            } catch {
+                guard !Task.isCancelled else { return }
+                NSWorkspace.shared.activateFileViewerSelecting([original])
+                self.fail(.exportFailed(ScreenRecordingError.reason(error)))
+            }
         }
     }
 
@@ -388,6 +509,7 @@ final class RecordingController: ObservableObject {
         let visibleFor: Duration
         switch newPhase {
         case .saved: visibleFor = .seconds(2)
+        case .translated(_, let missing): visibleFor = .seconds(missing > 0 ? 4 : 3)
         case .failed: visibleFor = .seconds(4)
         default: return
         }

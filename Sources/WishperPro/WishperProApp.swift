@@ -40,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         recording.excludedWindowIDs = { [weak self] in
             [self?.bubbleController.windowNumber].compactMap { $0 }
         }
+        recording.translationContext = { [weak self] in
+            self?.viewModel.recordingTranslationContext
+        }
         if viewModel.needsSetup {
             DispatchQueue.main.async { SettingsOpener.open() }
         }
@@ -123,6 +126,15 @@ struct MenuBarContent: View {
             .disabled(recording.phase.isBusy)
             Toggle("Som do Mac", isOn: $recording.recordsSystemAudio)
                 .disabled(recording.phase.isBusy)
+            Picker("Traduzir para", selection: $recording.translationLanguage) {
+                Text("Não traduzir").tag("")
+                ForEach(SupportedLanguage.targetLanguages) { language in
+                    Text(language.displayName).tag(language.rawValue)
+                }
+            }
+            .pickerStyle(.menu)
+            // Without a microphone there is no voice to translate.
+            .disabled(recording.phase.isBusy || recording.menuMicrophone == "none")
             Button("Mostrar gravações") {
                 recording.showRecordings()
             }

@@ -709,6 +709,12 @@ final class VoicePasteViewModel: ObservableObject {
         }
     }
 
+    /// For the screen recording's translation: nil without a saved API key.
+    var recordingTranslationContext: TranslationContext? {
+        guard let activeAPIKey, !activeAPIKey.isEmpty else { return nil }
+        return TranslationContext(apiKey: activeAPIKey, dictionary: textSettings.dictionary, source: selectedSourceLanguage)
+    }
+
     private func persistTranslationSettings() {
         let defaults = UserDefaults.standard
         defaults.set(translationEnabled, forKey: DefaultsKey.translationEnabled)
