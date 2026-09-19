@@ -81,7 +81,8 @@ Mostrar gravações
 ```
 
 - **Gravar ecrã…** abre o seletor do sistema com os três modos (ecrã, janela, app). A app exclui-se do seletor
-  pelo bundle ID e pela janela da bolha.
+  pelo bundle ID e pela janela da bolha. O seletor não deixa mudar o que se grava a meio
+  (`allowsChangingSelectedContent = false`).
 - **O item muda com a fase.** Com o seletor aberto fica desativado; durante a contagem diz "Cancelar gravação"; a
   gravar diz "Parar gravação"; a guardar diz "A guardar…" e fica desativado.
 - **Microfone e Som do Mac** ficam desativados durante uma gravação e valem para a seguinte.
@@ -154,6 +155,9 @@ cada reinstalação ad-hoc. Filmes não tem essa proteção.
 
 Cancelar durante a contagem para o stream, apaga o ficheiro vazio e volta a `.idle`.
 
+Parar a captura no menu do sistema (o ícone de captura do macOS) conta como "Parar gravação". Sair da app durante uma
+gravação guarda-a primeiro: o `AppDelegate` responde `.terminateLater` e só fecha a app depois de fechar o ficheiro.
+
 ## Formato do ficheiro
 
 **Contentor.** QuickTime (`.mov`) com `movieFragmentInterval` de 10 s. Se a app fechar ou o Mac desligar a meio, o
@@ -187,35 +191,44 @@ A voz é a única faixa mono, e é assim que a parte 2 a encontra. O QuickTime t
   ligar o microfone.
 - O tempo de cada bloco convertido conta as amostras escritas desde o primeiro bloco, para não haver sobreposições
   nem buracos.
-- Se esse tempo se afastar mais de 50 ms do tempo do bloco (o microfone falhou um bocado), recomeça a contar a partir
-  do tempo do bloco.
+- Se o bloco chegar mais de 50 ms depois desse tempo (o microfone falhou um bocado), a contagem recomeça no tempo do
+  bloco. Se chegar mais de 50 ms antes (o relógio do microfone adiantou-se), o bloco é descartado, para nunca haver
+  sobreposições.
 
 **Som do Mac.** Os blocos do ScreenCaptureKit entram tal como chegam. O formato é fixo, porque a configuração pede
 48 kHz estéreo.
 
 ## Componentes
 
-### `Services/ScreenRecorder.swift` (novo)
+### `Services/RecordingWriter.swift` (novo)
 
 - **`RecordingSize.output(points:scale:) -> CGSize`:** a regra do tamanho. É pura e testável.
 - **`RecordingFile`:** a pasta (`~/Movies/Wishper Pro`) e o nome (`url(for: Date, in: URL)`, com sufixo quando o
   ficheiro já existe).
 - **`RecordingWriter`:** o `AVAssetWriter` e as suas entradas. Usa só AVFoundation, sem ScreenCaptureKit, e o
   autoteste usa-o com dados sintéticos.
-  - Métodos: `begin(at:)`, `appendVideo(_:)`, `appendVoice(_:at:)`, `appendSystemAudio(_:)` e
-    `finish(at:) async throws`.
+  - Métodos: `begin(at:)`, `appendVideo(_:at:)`, `appendVoice(_:at:)`, `appendSystemAudio(_:)`,
+    `finish(at:) async throws` e `cancel()`.
   - `appendVoice` recebe um `AVAudioPCMBuffer` em qualquer formato e faz a conversão para 48 kHz mono descrita em
     "Voz", incluindo refazer o conversor quando o formato muda.
   - Guarda os tempos da voz e o último fotograma.
-  - É sempre chamado na mesma fila.
+  - É sempre chamado na mesma fila. O `finish(at:)` é `nonisolated(nonsending)` (Swift 6.2): corre no ator de quem o
+    chama.
+
+### `Services/ScreenRecorder.swift` (novo)
+
+- **`RecordingMicrophone`:** `.off`, `.systemDefault` ou `.device(id)`, lido do valor guardado. Um dispositivo
+  desligado passa ao predefinido. O caso chama-se `.off` para não se confundir com `Optional.none`.
 - **`ScreenRecorder`** (`@available(macOS 15, *)`): o `SCStream` e o seu `SCStreamOutput`/`SCStreamDelegate`.
   - Usa uma fila série para o ecrã, o som e o microfone. Assim a ordem mantém-se e o `RecordingWriter` só é usado
     nessa fila.
-  - Métodos: `start(filter:options:) async throws`, `beginWriting()`, `stop() async throws -> URL`.
+  - Métodos: `init(filter:microphone:systemAudio:url:) throws`, `start() async throws`, `beginWriting()`,
+    `stop() async throws -> URL` e `cancel() async`.
   - Callbacks:
     - `onMicrophone: (Data, Double) -> Void` recebe PCM16 24 kHz e o nível, via `PCMConverter` e `PCM16.level`.
       Agora serve para o nível da bolha; na parte 2 é o mesmo caminho da tradução ao vivo.
-    - `onFailure: (Error) -> Void` avisa quando o stream para com erro.
+    - `onEnded: (Error?) -> Void` avisa quando o stream acaba sozinho, já com o ficheiro fechado. Recebe `nil` quando
+      a pessoa parou a captura no menu do sistema, e isso conta como gravação guardada.
   - É `@unchecked Sendable`, com o estado preso à fila série (como o `MicrophoneStream`, que usa um lock).
 - **`ScreenRecordingError`:** enum `LocalizedError` com as mensagens da tabela de erros.
 
@@ -231,10 +244,13 @@ A voz é a única faixa mono, e é assim que a parte 2 a encontra. O QuickTime t
   da bolha excluídos.
 - **O resto do ciclo:** a contagem, os sons, o Finder, o temporizador do tempo decorrido e a permissão do microfone.
   Pede a permissão se ainda não foi decidida; se foi recusada, grava sem voz e avisa.
+- **Sair da app:** `finishBeforeQuit()` guarda a gravação em curso, ou cancela a contagem, antes de a app fechar.
 - Fica fora do `VoicePasteViewModel` (770 linhas), que continua a ser a fonte de verdade do ditado.
 
 ### Alterações
 
+- **`Services/MicrophoneStream.swift`:** o `PCMConverter` aceita um formato de saída (PCM16 por omissão) e ganha
+  `convertBuffer(_:)`, para a voz a 48 kHz usar a mesma conversão que o ditado.
 - **`WishperProApp.swift`:**
   - o `AppDelegate` cria o `RecordingController` (macOS 15+);
   - o `MenuBarContent` ganha o bloco de gravação;
@@ -262,7 +278,8 @@ A voz é a única faixa mono, e é assim que a parte 2 a encontra. O QuickTime t
 | Situação | Resultado |
 |---|---|
 | Seletor cancelado | nada acontece |
-| Sem acesso ao microfone | grava sem voz; bolha: "Sem acesso ao microfone: a gravar sem voz." |
+| Sem acesso ao microfone | grava sem voz; a bolha mostra, por baixo do tempo: "Sem acesso ao microfone: a gravar sem voz." |
+| Captura parada no menu do sistema | como "Parar gravação": "Gravação guardada" |
 | Microfone escolhido desligado | grava com o predefinido do sistema, sem aviso |
 | O stream não arranca | "Não foi possível começar a gravar: <motivo>" |
 | Pasta impossível de criar | "Não foi possível criar a pasta Filmes/Wishper Pro." |
@@ -274,7 +291,9 @@ A voz é a única faixa mono, e é assim que a parte 2 a encontra. O QuickTime t
 
 | Ficheiro | Alteração |
 |---|---|
-| `Services/ScreenRecorder.swift` | novo (`RecordingSize`, `RecordingFile`, `RecordingWriter`, `ScreenRecorder`, `ScreenRecordingError`) |
+| `Services/RecordingWriter.swift` | novo (`RecordingSize`, `RecordingFile`, `RecordingWriter`) |
+| `Services/ScreenRecorder.swift` | novo (`RecordingMicrophone`, `ScreenRecorder`, `ScreenRecordingError`) |
+| `Services/MicrophoneStream.swift` | `PCMConverter` com formato de saída e `convertBuffer(_:)` |
 | `RecordingController.swift` | novo |
 | `WishperProApp.swift` | bloco de gravação no menu; ícone com o tempo; o `AppDelegate` cria o controlador |
 | `Services/FloatingBubbleController.swift` | mostra também a gravação; número da janela da bolha |
@@ -319,8 +338,13 @@ seletor não precisa de chave nenhuma.
 
 ## A confirmar na implementação
 
-- Os blocos do som do Mac entram diretamente na entrada AAC (vêm em formato não intercalado).
-- O `movieFragmentInterval` deixa o ficheiro legível depois de um `kill -9`.
+Confirmado num teste descartável do motor (2026-09-19, Studio Display, com o `ScreenRecorder` e o `RecordingWriter` do
+plano):
+- **Parada normalmente, 12,5 s:** abre no QuickTime. Vídeo 3840×2160 a 29 fps. A voz (mono) e o som do Mac (estéreo,
+  com um som de outra app) começam os dois em 0,00 s. Os blocos do som do Mac entram diretamente na entrada AAC.
+- **Morta com `SIGKILL` aos 25 s:** o ficheiro abre com 20,08 s. Os fragmentos de 10 s cumprem.
+
+Ainda por confirmar:
 - O menu aberto da app (janelas do `NSMenu`) e o ícone da barra de menus ficam fora da captura com
   `excludedBundleIDs`.
 - O `MenuBarExtra` atualiza o tempo no ícone a cada segundo.
