@@ -72,7 +72,7 @@ do protótipo").
 
 ## Tarefas
 
-### Tarefa 1: Regra de tempo da voz e o tempo de cada bloco escrito
+### Task 1: Regra de tempo da voz e o tempo de cada bloco escrito
 **Ficheiros:**
 - Modify: `Sources/WishperPro/Services/RecordingWriter.swift` (`appendVoice` → `voiceTime` + tempo devolvido)
 - Modify: `Sources/WishperPro/SelfTest.swift` (`checkVoiceTiming`)
@@ -210,7 +210,7 @@ git commit -m "Test the voice timing rule and return when each block was written
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 2: `PhraseDetector`: frases pelas pausas, relativo ao ruído da sala
+### Task 2: `PhraseDetector`: frases pelas pausas, relativo ao ruído da sala
 **Ficheiros:**
 - Create: `Sources/WishperPro/Services/PhraseDetector.swift`
 - Modify: `Sources/WishperPro/Services/MicrophoneStream.swift` (`PCM16.decibels(of:)`)
@@ -582,7 +582,7 @@ git commit -m "Split the recorded voice into phrases at pauses, relative to the 
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 3: Modo de narração no `OpenAITextProcessor`
+### Task 3: Modo de narração no `OpenAITextProcessor`
 **Ficheiros:**
 - Modify: `Sources/WishperPro/Services/OpenAITextProcessor.swift`
 - Modify: `Sources/WishperPro/SelfTest.swift` (`checkNarrationRequest`; online: `checkNarration`)
@@ -823,7 +823,7 @@ git commit -m "Add a narration mode to the text processor for recording translat
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 4: `GPTLiveReader`: a voz da GPT-Live, palavra por palavra
+### Task 4: `GPTLiveReader`: a voz da GPT-Live, palavra por palavra
 **Ficheiros:**
 - Create: `Sources/WishperPro/Services/GPTLiveReader.swift` (`LiveVoice`, `GPTLiveError`, `GPTLiveReader`, `VoicePreview`)
 - Modify: `Sources/WishperPro/SelfTest.swift` (`checkLiveReaderProtocol`; online: `checkLiveReader`)
@@ -1317,7 +1317,7 @@ git commit -m "Read translated text aloud with GPT-Live, word for word
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 5: Encaixe das leituras e legendas (regras puras)
+### Task 5: Encaixe das leituras e legendas (regras puras)
 **Ficheiros:**
 - Create: `Sources/WishperPro/Services/TranslatedVideoExporter.swift` (só `SubtitleStyle`, `VoicePlacement`, `SubtitleCue`, `SubtitleCues`, `TranslatedVideoError`; o exportador entra na Tarefa 7)
 - Modify: `Sources/WishperPro/SelfTest.swift` (`checkVoicePlacement`, `checkSubtitleCues`)
@@ -1528,7 +1528,7 @@ git commit -m "Place each translated reading on the timeline and split subtitles
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 6: `RecordingTranslator`: frases traduzidas e lidas enquanto se grava
+### Task 6: `RecordingTranslator`: frases traduzidas e lidas enquanto se grava
 **Ficheiros:**
 - Create: `Sources/WishperPro/Services/RecordingTranslator.swift` (`TranslatedPhrase`, `TranslationResult`, `TranslationSteps` + `.live`, `RecordingTranslator`)
 - Modify: `Sources/WishperPro/Services/OpenAITranscriptionClient.swift` (o erro deixa de ser `private`)
@@ -1909,7 +1909,7 @@ git commit -m "Translate and read phrases in order while the screen is recorded
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 7: `TranslatedVideoExporter`: o vídeo traduzido
+### Task 7: `TranslatedVideoExporter`: o vídeo traduzido
 **Ficheiros:**
 - Modify: `Sources/WishperPro/Services/TranslatedVideoExporter.swift` (acrescentar o exportador e o `MacSoundReader`)
 - Modify: `Sources/WishperPro/Services/MicrophoneStream.swift` (`PendingBuffer` deixa de ser `private`)
@@ -2582,7 +2582,7 @@ git commit -m "Export the translated video with the mixed voice and subtitles
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 8: Ligar a tradução à gravação: menu, controlador, bolha
+### Task 8: Ligar a tradução à gravação: menu, controlador, bolha
 **Ficheiros:**
 - Modify: `Sources/WishperPro/Services/ScreenRecorder.swift` (`onVoice`, erros da tradução)
 - Modify: `Sources/WishperPro/RecordingController.swift`
@@ -3607,7 +3607,7 @@ git commit -m "Translate screen recordings from the menu and show it in the bubb
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 9: Definições › Gravação: voz com amostra e legendas
+### Task 9: Definições › Gravação: voz com amostra e legendas
 **Ficheiros:**
 - Modify: `Sources/WishperPro/SettingsView.swift` (painel `RecordingPane`, `VoicePreviewPlayer`)
 - Modify: `Sources/WishperPro/WishperProApp.swift` (`SettingsView(viewModel:recording:)`)
@@ -3901,7 +3901,7 @@ git commit -m "Add a Recording settings page with the voice, a sample and subtit
 Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>"
 ```
 
-### Tarefa 10: Documentação e verificação final com a pessoa
+### Task 10: Documentação e verificação final com a pessoa
 **Ficheiros:**
 - Modify: `CLAUDE.md`
 - Modify: `README.md`
