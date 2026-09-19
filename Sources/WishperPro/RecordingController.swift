@@ -176,12 +176,14 @@ final class RecordingController: ObservableObject {
         let observer = PickerObserver(
             onPick: { [weak self] filter in self?.picked(filter) },
             onCancel: { [weak self] in
-                self?.pickerClosed()
-                self?.setPhase(.idle)
+                guard let self, self.phase == .choosing else { return }
+                self.pickerClosed()
+                self.setPhase(.idle)
             },
             onFailure: { [weak self] error in
-                self?.pickerClosed()
-                self?.fail(.startFailed(ScreenRecordingError.reason(error)))
+                guard let self, self.phase == .choosing else { return }
+                self.pickerClosed()
+                self.fail(.startFailed(ScreenRecordingError.reason(error)))
             }
         )
         picker.add(observer)
