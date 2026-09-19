@@ -29,6 +29,7 @@ enum ScreenRecordingError: LocalizedError {
     case folderUnavailable
     case startFailed(String)
     case interrupted(String)
+    case contentClosed
 
     var errorDescription: String? {
         switch self {
@@ -38,6 +39,8 @@ enum ScreenRecordingError: LocalizedError {
             return "Não foi possível começar a gravar: \(reason)"
         case .interrupted(let reason):
             return "Gravação interrompida: \(reason). O que foi gravado ficou guardado."
+        case .contentClosed:
+            return "A janela ou a app gravada fechou."
         }
     }
 
@@ -57,8 +60,9 @@ enum ScreenRecordingError: LocalizedError {
 final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked Sendable {
     /// Microphone audio as 100 ms PCM16 24 kHz chunks and their level: the bubble now, live translation in part 2.
     var onMicrophone: (@Sendable (Data, Double) -> Void)?
-    /// The stream ended by itself, with the file already closed: `nil` when the person stopped it from the system's
-    /// menu, otherwise the reason (window closed, display gone, disk full…).
+    /// The stream ended by itself: `nil` when the person stopped it from the system's menu, otherwise why (the
+    /// recorded window or app closed, the stream failed, a write failed). The owner then closes the file with
+    /// `stop()` — or drops it with `cancel()` before time zero — so the file has a single closer.
     var onEnded: (@Sendable (Error?) -> Void)?
 
     let url: URL
@@ -117,6 +121,8 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     /// Time zero is now, on the capture clock.
     func beginWriting() {
         queue.async { [self] in
+            // A recording that was already closed or cancelled must not start a session.
+            guard !isClosed else { return }
             writer.begin(at: CMClockGetTime(CMClockGetHostTimeClock()))
         }
     }
@@ -141,10 +147,6 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         case .screen:
             guard let frame = Self.completeFrame(sample) else { return }
             writer.appendVideo(frame, at: sample.presentationTimeStamp)
-            if let failure = writer.failure, !reportedFailure {
-                reportedFailure = true
-                end(with: failure)
-            }
         case .audio:
             writer.appendSystemAudio(sample)
         case .microphone:
@@ -154,21 +156,23 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         @unknown default:
             break
         }
+        // Any write can fail (e.g. the disk is full), even while the screen is still.
+        if let failure = writer.failure, !reportedFailure {
+            reportedFailure = true
+            onEnded?(failure)
+        }
     }
 
     func stream(_ stream: SCStream, didStopWithError error: any Error) {
         let stoppedByPerson = (error as? SCStreamError)?.code == .userStopped
-        end(with: stoppedByPerson ? nil : error)
+        onEnded?(stoppedByPerson ? nil : error)
     }
 
-    private func end(with error: Error?) {
-        Task { [self] in
-            try? await stream?.stopCapture()
-            // stop() or cancel() may have closed the file already; then they report it, not this path.
-            guard let end = await markClosed() else { return }
-            try? await writer.finish(at: end)
-            onEnded?(error)
-        }
+    /// macOS 15.2+: the recorded window or app closed. The stream stays alive (it would wake if the window reopened),
+    /// so without this the recording would go on with a frozen image.
+    @available(macOS 15.2, *)
+    func streamDidBecomeInactive(_ stream: SCStream) {
+        onEnded?(ScreenRecordingError.contentClosed)
     }
 
     /// Closes the file once, whoever gets there first: `stop()` or the stream ending by itself.

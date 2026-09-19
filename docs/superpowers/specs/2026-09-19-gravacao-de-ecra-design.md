@@ -227,10 +227,13 @@ A voz é a única faixa mono, e é assim que a parte 2 a encontra. O QuickTime t
   - Callbacks:
     - `onMicrophone: (Data, Double) -> Void` recebe PCM16 24 kHz e o nível, via `PCMConverter` e `PCM16.level`.
       Agora serve para o nível da bolha; na parte 2 é o mesmo caminho da tradução ao vivo.
-    - `onEnded: (Error?) -> Void` avisa quando o stream acaba sozinho, já com o ficheiro fechado. Recebe `nil` quando
-      a pessoa parou a captura no menu do sistema, e isso conta como gravação guardada.
+    - `onEnded: (Error?) -> Void` avisa quando o stream acaba sozinho: `nil` quando a pessoa parou a captura no menu do
+      sistema (conta como gravação guardada), `ScreenRecordingError.contentClosed` quando a janela ou a app gravada
+      fechou (`streamDidBecomeInactive`, macOS 15.2), ou o erro do stream ou da escrita. Quem fecha o ficheiro é sempre
+      o `RecordingController`, com `stop()` (ou `cancel()` durante a contagem): há um só sítio que o fecha.
   - É `@unchecked Sendable`, com o estado preso à fila série (como o `MicrophoneStream`, que usa um lock).
-- **`ScreenRecordingError`:** enum `LocalizedError` com as mensagens da tabela de erros.
+- **`ScreenRecordingError`:** enum `LocalizedError` com as mensagens da tabela de erros, e `contentClosed` ("A janela ou
+  a app gravada fechou.") como motivo da interrupção.
 
 ### `RecordingController.swift` (novo, `@MainActor`, `ObservableObject`)
 
@@ -345,6 +348,7 @@ plano):
 - **Morta com `SIGKILL` aos 25 s:** o ficheiro abre com 20,08 s. Os fragmentos de 10 s cumprem.
 
 Ainda por confirmar:
+- Que o `streamDidBecomeInactive` chega ao fechar a janela ou a app gravada, e não ao minimizá-la.
 - O menu aberto da app (janelas do `NSMenu`) e o ícone da barra de menus ficam fora da captura com
   `excludedBundleIDs`.
 - O `MenuBarExtra` atualiza o tempo no ícone a cada segundo.

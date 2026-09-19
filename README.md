@@ -194,7 +194,7 @@ Design documents live in [`docs/superpowers/specs`](docs/superpowers/specs) and 
 
 ```bash
 swift build                          # debug build
-.build/debug/WishperPro --selftest   # 153 offline checks, no network
+.build/debug/WishperPro --selftest   # 154 offline checks, no network
 ./scripts/run-dev-app.sh --selftest  # the offline checks plus live, fallback and cleanup against the API
 ./scripts/run-dev-app.sh             # a dev app bundle in /tmp, for testing the interface
 ```

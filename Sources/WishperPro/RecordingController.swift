@@ -104,6 +104,7 @@ final class RecordingController: ObservableObject {
     private var recorder: AnyObject?
     private var pickerObserver: AnyObject?
     private var countdown: Task<Void, Never>?
+    private var isStarting = false
     private var stopTask: Task<Void, Never>?
     private var clock: Timer?
     private var resetTask: Task<Void, Never>?
@@ -195,8 +196,12 @@ final class RecordingController: ObservableObject {
 
     @available(macOS 15, *)
     private func picked(_ filter: SCContentFilter) {
-        guard phase == .choosing else { return }
-        Task { await begin(filter) }
+        guard phase == .choosing, !isStarting else { return }
+        isStarting = true
+        Task {
+            await begin(filter)
+            isStarting = false
+        }
     }
 
     /// Starts the stream (the microphone warms up during the countdown), then writes from the end of the countdown.
@@ -270,14 +275,15 @@ final class RecordingController: ObservableObject {
         self.clock = clock
     }
 
-    private func stop() {
+    /// Closes the file. `reason` is why the stream ended by itself; `nil` when the person stopped it.
+    private func stop(reason: Error? = nil) {
         guard #available(macOS 15, *), stopTask == nil, let recorder = recorder as? ScreenRecorder else { return }
         setPhase(.saving)
         clock?.invalidate()
         stopTask = Task { [weak self] in
             do {
                 let url = try await recorder.stop()
-                self?.finish(url, failure: nil)
+                self?.finish(url, failure: reason)
             } catch {
                 self?.finish(recorder.url, failure: error)
             }
@@ -292,20 +298,22 @@ final class RecordingController: ObservableObject {
         Task { await recorder.cancel() }
     }
 
-    /// The stream ended by itself (the person stopped it from the system's menu, or it failed).
+    /// The stream ended by itself (stopped from the system's menu, the recorded window or app closed, or a write
+    /// failed). The file is closed here, through `stop(reason:)`, or dropped during the countdown.
     private func ended(_ error: Error?) {
         guard #available(macOS 15, *), stopTask == nil, let recorder = recorder as? ScreenRecorder else { return }
         switch phase {
         case .countdown:
             // Nothing was written yet.
             clearRecording()
+            Task { await recorder.cancel() }
             if let error {
                 fail(.startFailed(ScreenRecordingError.reason(error)))
             } else {
                 setPhase(.idle)
             }
         case .recording:
-            finish(recorder.url, failure: error)
+            stop(reason: error)
         default:
             break
         }

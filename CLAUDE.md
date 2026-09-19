@@ -53,7 +53,7 @@ Gravação: menu → `SCContentSharingPicker` (sem permissão de Gravação de E
 - `KeychainService` — API key no Keychain (service: com.wishperpro.desktop)
 - `SoundCuePlayer` — sons de início/fim
 - `Permissions` — pedido de acesso ao microfone
-- `ScreenRecorder` — um `SCStream` (ecrã, som do Mac, microfone) numa fila série → `RecordingWriter`; `onMicrophone` (PCM16 24 kHz + nível), `onEnded` (`nil` quando se para no menu do sistema); macOS 15+
+- `ScreenRecorder` — um `SCStream` (ecrã, som do Mac, microfone) numa fila série → `RecordingWriter`; `onMicrophone` (PCM16 24 kHz + nível), `onEnded` (`nil` quando se para no menu do sistema; também quando a janela ou a app gravada fecha); quem fecha o ficheiro é o `RecordingController`; macOS 15+
 - `RecordingWriter` — `AVAssetWriter` `.mov` com fragmentos de 10 s: H.264 (≤ 3840×2160, 30 fps), voz AAC mono 48 kHz (convertida e cronometrada por amostras), som do Mac AAC estéreo; `RecordingSize`, `RecordingFile`
 
 ### Persistência

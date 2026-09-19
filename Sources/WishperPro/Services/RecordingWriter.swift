@@ -212,10 +212,10 @@ final class RecordingWriter {
     }
 
     private func appendFrame(_ frame: CVPixelBuffer, at time: CMTime) {
-        guard time > lastFrameTime, video.isReadyForMoreMediaData,
-              frames.append(frame, withPresentationTime: time)
-        else { return }
+        guard time > lastFrameTime else { return }
+        // The newest image is kept even when the encoder is busy: finish(at:) repeats it at the end.
         lastFrame = frame
+        guard video.isReadyForMoreMediaData, frames.append(frame, withPresentationTime: time) else { return }
         lastFrameTime = time
     }
 

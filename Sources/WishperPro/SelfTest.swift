@@ -770,6 +770,11 @@ enum SelfTest {
                 == "Gravação interrompida: o ecrã foi desligado. O que foi gravado ficou guardado.",
             "gravação: mensagem de interrupção"
         )
+        check(
+            ScreenRecordingError.interrupted(ScreenRecordingError.reason(ScreenRecordingError.contentClosed)).localizedDescription
+                == "Gravação interrompida: a janela ou a app gravada fechou. O que foi gravado ficou guardado.",
+            "gravação: janela ou app fechada"
+        )
     }
 
     private static func checkRecordingPhases() {
