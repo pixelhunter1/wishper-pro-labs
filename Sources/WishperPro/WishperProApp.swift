@@ -106,6 +106,9 @@ struct MenuBarContent: View {
                 recording.toggle()
             }
             .disabled(!recording.phase.acceptsMenuAction)
+            .keyboardShortcut(
+                recording.phase.acceptsStopShortcut ? KeyboardShortcut(.escape, modifiers: [.control, .command]) : nil
+            )
             Picker("Microfone", selection: Binding(
                 get: { recording.menuMicrophone },
                 set: { recording.microphoneID = $0 }

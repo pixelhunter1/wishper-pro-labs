@@ -83,6 +83,9 @@ Mostrar gravações
 - **Gravar ecrã…** abre o seletor do sistema com os três modos (ecrã, janela, app). A app exclui-se do seletor
   pelo bundle ID e pela janela da bolha. O seletor não deixa mudar o que se grava a meio
   (`allowsChangingSelectedContent = false`).
+- **Atalho para parar:** Control-Command-Esc (o mesmo do gravador do macOS) cancela a contagem ou para a gravação, e
+  aparece ao lado do item no menu. Só fica registado durante a contagem e a gravação, por isso as outras apps ficam
+  com o Esc.
 - **O item muda com a fase.** Com o seletor aberto fica desativado; durante a contagem diz "Cancelar gravação"; a
   gravar diz "Parar gravação"; a guardar diz "A guardar…" e fica desativado.
 - **Microfone e Som do Mac** ficam desativados durante uma gravação e valem para a seguinte.

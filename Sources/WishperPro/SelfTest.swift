@@ -802,6 +802,10 @@ enum SelfTest {
             "gravação: bolha em todas as fases menos repouso e escolha"
         )
         check(
+            phases.map(\.acceptsStopShortcut) == [false, false, true, true, false, false, false],
+            "gravação: Control-Command-Esc só na contagem e a gravar"
+        )
+        check(
             RecordingClock.text(0) == "00:00" && RecordingClock.text(83) == "01:23"
                 && RecordingClock.text(3_723) == "1:02:03",
             "gravação: relógio 00:00, 01:23 e 1:02:03"

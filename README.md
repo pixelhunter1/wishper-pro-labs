@@ -113,7 +113,7 @@ Settings open by themselves while anything is missing:
 2. Hold **Option + Space** and speak; let go when you are done. A quick tap instead keeps recording hands-free until you tap again.
 3. The text shows up in the bubble while you speak and is pasted when you stop. `Esc` cancels without pasting.
 
-To record the screen, open the menu bar menu and choose **Gravar ecrã…**, then pick a display, a window or an app. After a 3-2-1 countdown the bubble shows the time; choose **Parar gravação** in the menu to stop. The file lands in `~/Movies/Wishper Pro` and Finder shows it. **Microfone** and **Som do Mac** in the same menu set what the next recording captures.
+To record the screen, open the menu bar menu and choose **Gravar ecrã…**, then pick a display, a window or an app. After a 3-2-1 countdown the bubble shows the time; choose **Parar gravação** in the menu, or press **Control-Command-Esc**, to stop. The file lands in `~/Movies/Wishper Pro` and Finder shows it. **Microfone** and **Som do Mac** in the same menu set what the next recording captures.
 
 ## Settings
 
@@ -194,7 +194,7 @@ Design documents live in [`docs/superpowers/specs`](docs/superpowers/specs) and 
 
 ```bash
 swift build                          # debug build
-.build/debug/WishperPro --selftest   # 154 offline checks, no network
+.build/debug/WishperPro --selftest   # 155 offline checks, no network
 ./scripts/run-dev-app.sh --selftest  # the offline checks plus live, fallback and cleanup against the API
 ./scripts/run-dev-app.sh             # a dev app bundle in /tmp, for testing the interface
 ```

@@ -48,7 +48,7 @@ Gravação: menu → `SCContentSharingPicker` (sem permissão de Gravação de E
 - `OpenAITranscriptionClient` — plano B: POST /v1/audio/transcriptions com `gpt-transcribe`, `languages[]` e `keywords[]`
 - `OpenAITextProcessor` — POST /v1/chat/completions com `gpt-5.6-luna` (`reasoning_effort: "none"`, resposta JSON `{"text"}`); recusa respostas vazias ou muito maiores do que o ditado
 - `FocusDetector` — app da frente e, em browsers, o domínio da página pela Acessibilidade (0,25 s por pedido); só o domínio fica no Mac
-- `GlobalHotkeyMonitor` — Carbon (premir/largar) + NSEvent (só-modificador); Esc registado só durante o ditado; `HotkeyDecider`
+- `GlobalHotkeyMonitor` — Carbon (premir/largar) + NSEvent (só-modificador); Esc registado só durante o ditado e ⌃⌘Esc só durante a gravação (o `RecordingController` tem o seu monitor; cada handler passa os atalhos que não são seus); `HotkeyDecider`
 - `AutoPaster` — Accessibility + Cmd+V; guarda e repõe o clipboard
 - `KeychainService` — API key no Keychain (service: com.wishperpro.desktop)
 - `SoundCuePlayer` — sons de início/fim

@@ -44,6 +44,14 @@ enum RecordingPhase: Equatable {
         case .countdown, .recording, .saving, .saved, .failed: return true
         }
     }
+
+    /// Control-Command-Esc cancels the countdown or stops the recording, like the menu item.
+    var acceptsStopShortcut: Bool {
+        switch self {
+        case .countdown, .recording: return true
+        case .idle, .choosing, .saving, .saved, .failed: return false
+        }
+    }
 }
 
 /// "01:23", or "1:02:03" from an hour on.
@@ -101,6 +109,8 @@ final class RecordingController: ObservableObject {
     }
 
     private let soundCuePlayer = SoundCuePlayer()
+    /// Control-Command-Esc, registered from the countdown until the recording ends.
+    private let stopShortcut = GlobalHotkeyMonitor()
     private var recorder: AnyObject?
     private var pickerObserver: AnyObject?
     private var countdown: Task<Void, Never>?
@@ -112,6 +122,10 @@ final class RecordingController: ObservableObject {
 
     init() {
         guard Self.isSupported else { return }
+        stopShortcut.onStopRecording = { [weak self] in
+            guard let self, self.phase.acceptsStopShortcut else { return }
+            self.toggle()
+        }
         refreshMicrophones()
         for name in [AVCaptureDevice.wasConnectedNotification, AVCaptureDevice.wasDisconnectedNotification] {
             let observer = NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { [weak self] _ in
@@ -249,6 +263,7 @@ final class RecordingController: ObservableObject {
             return
         }
         self.recorder = recorder
+        stopShortcut.setStopRecordingEnabled(true)
         soundCuePlayer.playStartCue()
         countdown = Task { [weak self] in
             for second in [3, 2, 1] {
@@ -343,6 +358,7 @@ final class RecordingController: ObservableObject {
         level = 0
         elapsed = 0
         notice = nil
+        stopShortcut.setStopRecordingEnabled(false)
         pickerClosed()
     }
 

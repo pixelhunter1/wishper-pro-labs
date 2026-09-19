@@ -115,13 +115,17 @@ final class GlobalHotkeyMonitor {
     private static let signature: OSType = 0x57535052 // "WSPR"
     private static let shortcutHotKeyID: UInt32 = 1
     private static let escapeHotKeyID: UInt32 = 2
+    private static let stopRecordingHotKeyID: UInt32 = 3
 
     /// Called when Esc is pressed while `setEscapeEnabled(true)` is active.
     var onEscape: (@MainActor () -> Void)?
+    /// Called when Control-Command-Esc is pressed while `setStopRecordingEnabled(true)` is active.
+    var onStopRecording: (@MainActor () -> Void)?
 
     private var eventHandler: EventHandlerRef?
     private var shortcutHotKeyRef: EventHotKeyRef?
     private var escapeHotKeyRef: EventHotKeyRef?
+    private var stopRecordingHotKeyRef: EventHotKeyRef?
     private var globalModifierMonitor: Any?
     private var localModifierMonitor: Any?
     private var activeShortcut: HotkeyShortcut?
@@ -170,23 +174,38 @@ final class GlobalHotkeyMonitor {
 
     /// Esc cancels a dictation. It is registered only while listening, so other apps keep their Esc.
     func setEscapeEnabled(_ enabled: Bool) {
+        setHotKey(&escapeHotKeyRef, enabled: enabled, keyCode: kVK_Escape, modifiers: 0, id: Self.escapeHotKeyID)
+    }
+
+    /// Control-Command-Esc stops a screen recording, as it stops macOS's own. Registered only while recording.
+    func setStopRecordingEnabled(_ enabled: Bool) {
+        setHotKey(
+            &stopRecordingHotKeyRef,
+            enabled: enabled,
+            keyCode: kVK_Escape,
+            modifiers: controlKey | cmdKey,
+            id: Self.stopRecordingHotKeyID
+        )
+    }
+
+    private func setHotKey(_ ref: inout EventHotKeyRef?, enabled: Bool, keyCode: Int, modifiers: Int, id: UInt32) {
         if enabled {
-            guard escapeHotKeyRef == nil, installEventHandlerIfNeeded() else { return }
+            guard ref == nil, installEventHandlerIfNeeded() else { return }
             var hotKeyRef: EventHotKeyRef?
             let status = RegisterEventHotKey(
-                UInt32(kVK_Escape),
-                0,
-                EventHotKeyID(signature: Self.signature, id: Self.escapeHotKeyID),
+                UInt32(keyCode),
+                UInt32(modifiers),
+                EventHotKeyID(signature: Self.signature, id: id),
                 GetEventDispatcherTarget(),
                 0,
                 &hotKeyRef
             )
             if status == noErr {
-                escapeHotKeyRef = hotKeyRef
+                ref = hotKeyRef
             }
-        } else if let escapeHotKeyRef {
-            UnregisterEventHotKey(escapeHotKeyRef)
-            self.escapeHotKeyRef = nil
+        } else if let registered = ref {
+            UnregisterEventHotKey(registered)
+            ref = nil
         }
     }
 
@@ -236,12 +255,13 @@ final class GlobalHotkeyMonitor {
                 let id = hotKeyID.id
                 let address = UInt(bitPattern: userData)
                 // Carbon delivers hot key events on the main thread.
-                MainActor.assumeIsolated {
-                    guard let pointer = UnsafeRawPointer(bitPattern: address) else { return }
-                    Unmanaged<GlobalHotkeyMonitor>.fromOpaque(pointer).takeUnretainedValue()
+                let handled = MainActor.assumeIsolated {
+                    guard let pointer = UnsafeRawPointer(bitPattern: address) else { return false }
+                    return Unmanaged<GlobalHotkeyMonitor>.fromOpaque(pointer).takeUnretainedValue()
                         .handleHotKey(signature: signature, id: id, isPress: isPress)
                 }
-                return noErr
+                // Another monitor's hot key (dictation and recording each have one) goes on to its handler.
+                return handled ? noErr : OSStatus(eventNotHandledErr)
             },
             2,
             &eventTypes,
@@ -251,16 +271,20 @@ final class GlobalHotkeyMonitor {
         return status == noErr
     }
 
-    private func handleHotKey(signature: OSType, id: UInt32, isPress: Bool) {
-        guard signature == Self.signature else { return }
+    /// Whether the hot key was this monitor's.
+    private func handleHotKey(signature: OSType, id: UInt32, isPress: Bool) -> Bool {
+        guard signature == Self.signature else { return false }
         switch id {
         case Self.shortcutHotKeyID where shortcutHotKeyRef != nil:
             if isPress { onPress?() } else { onRelease?() }
-        case Self.escapeHotKeyID where isPress && escapeHotKeyRef != nil:
-            onEscape?()
+        case Self.escapeHotKeyID where escapeHotKeyRef != nil:
+            if isPress { onEscape?() }
+        case Self.stopRecordingHotKeyID where stopRecordingHotKeyRef != nil:
+            if isPress { onStopRecording?() }
         default:
-            break
+            return false
         }
+        return true
     }
 
     private func installModifierMonitors() {
