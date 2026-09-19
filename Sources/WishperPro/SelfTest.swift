@@ -43,12 +43,14 @@ enum SelfTest {
     private static let minimumOverlap = 0.6
 
     static func run(audioPath: String?) -> Never {
-        print("== Verificações offline ==")
-        runOfflineChecks()
-        guard let audioPath else { finish() }
         Task {
-            print("== Verificações online (\(audioPath)) ==")
-            await runOnlineChecks(audioURL: URL(fileURLWithPath: audioPath))
+            print("== Verificações offline ==")
+            runOfflineChecks()
+            await runAsyncOfflineChecks()
+            if let audioPath {
+                print("== Verificações online (\(audioPath)) ==")
+                await runOnlineChecks(audioURL: URL(fileURLWithPath: audioPath))
+            }
             finish()
         }
         dispatchMain()
@@ -82,6 +84,10 @@ enum SelfTest {
         checkTextProcessorRequest()
         checkRecordingSize()
         checkRecordingFile()
+    }
+
+    private static func runAsyncOfflineChecks() async {
+        await checkRecordingWriter()
     }
 
     private static func runOnlineChecks(audioURL: URL) async {
@@ -712,6 +718,92 @@ enum SelfTest {
             "gravação: nome ocupado ganha \" 2\""
         )
         check(RecordingFile.folder.path.hasSuffix("/Movies/Wishper Pro"), "gravação: pasta Filmes/Wishper Pro")
+    }
+
+    /// 2 s written like a real recording: a frame before time zero and a still screen, voice that drops from 48 to
+    /// 16 kHz mid-way (a Bluetooth headset), the Mac's sound in ScreenCaptureKit's format, and audio before time zero.
+    private static func checkRecordingWriter() async {
+        do {
+            let full = try await writeRecording(voice: true, systemAudio: true)
+            defer { try? FileManager.default.removeItem(at: full) }
+            let tracks = try await recordingTracks(full)
+            check(tracks.video == 1 && tracks.audioChannels == [1, 2], "gravação: vídeo, voz mono e som do Mac estéreo")
+            check(abs(tracks.duration - 2) <= 0.1, "gravação: dura 2 s (obtido \(format(tracks.duration)))")
+            check(abs(tracks.videoDuration - 2) <= 0.1, "gravação: ecrã parado mantém o vídeo até ao fim")
+            check(
+                tracks.voiceStart < 0.05 && abs(tracks.voiceDuration - 2) <= 0.1,
+                "gravação: voz do zero aos 2 s com troca de formato (\(format(tracks.voiceStart))–\(format(tracks.voiceDuration)))"
+            )
+            let noVoice = try await writeRecording(voice: false, systemAudio: true)
+            defer { try? FileManager.default.removeItem(at: noVoice) }
+            check(try await recordingTracks(noVoice).audioChannels == [2], "gravação: sem microfone só grava o som do Mac")
+            let noSound = try await writeRecording(voice: true, systemAudio: false)
+            defer { try? FileManager.default.removeItem(at: noSound) }
+            check(try await recordingTracks(noSound).audioChannels == [1], "gravação: sem som do Mac só grava a voz")
+        } catch {
+            check(false, "gravação: escrever o ficheiro (\(error.localizedDescription))")
+        }
+    }
+
+    private static func writeRecording(voice: Bool, systemAudio: Bool) async throws -> URL {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("wishper-selftest-\(UUID().uuidString).mov")
+        let writer = try RecordingWriter(url: url, videoSize: CGSize(width: 320, height: 180), voice: voice, systemAudio: systemAudio)
+        func time(_ seconds: Double) -> CMTime { CMTime(seconds: 1_000 + seconds, preferredTimescale: 48_000) }
+        let mono48 = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
+        let mono16 = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
+        let stereo48 = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
+        // Before time zero: kept as the first frame, or dropped.
+        writer.appendVideo(try pixelBuffer(), at: time(-0.5))
+        writer.appendVoice(sineBuffer(format: mono48, frames: 4_800, startFrame: 0), at: time(-0.4))
+        if let early = RecordingWriter.sampleBuffer(sineBuffer(format: stereo48, frames: 4_800, startFrame: 0), at: time(-0.4)) {
+            writer.appendSystemAudio(early)
+        }
+        writer.begin(at: time(0))
+        writer.appendVideo(try pixelBuffer(), at: time(0.5))
+        for part in 0..<20 {
+            let seconds = Double(part) / 10
+            if part < 10 {
+                writer.appendVoice(sineBuffer(format: mono48, frames: 4_800, startFrame: part * 4_800), at: time(seconds))
+            } else {
+                writer.appendVoice(sineBuffer(format: mono16, frames: 1_600, startFrame: part * 1_600), at: time(seconds))
+            }
+            let sound = sineBuffer(format: stereo48, frames: 4_800, startFrame: part * 4_800)
+            if let sample = RecordingWriter.sampleBuffer(sound, at: time(seconds)) {
+                writer.appendSystemAudio(sample)
+            }
+        }
+        try await writer.finish(at: time(2))
+        return url
+    }
+
+    private static func recordingTracks(
+        _ url: URL
+    ) async throws -> (video: Int, audioChannels: [Int], duration: Double, videoDuration: Double, voiceStart: Double, voiceDuration: Double) {
+        let asset = AVURLAsset(url: url)
+        let video = try await asset.loadTracks(withMediaType: .video)
+        let audio = try await asset.loadTracks(withMediaType: .audio)
+        var channels: [Int] = []
+        for track in audio {
+            let description = try await track.load(.formatDescriptions).first
+            channels.append(Int(description.flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mChannelsPerFrame } ?? 0))
+        }
+        let videoRange = try await video.first?.load(.timeRange)
+        let voiceRange = try await audio.first?.load(.timeRange)
+        return (
+            video.count,
+            channels,
+            try await asset.load(.duration).seconds,
+            videoRange?.duration.seconds ?? 0,
+            voiceRange?.start.seconds ?? -1,
+            voiceRange?.duration.seconds ?? 0
+        )
+    }
+
+    private static func pixelBuffer() throws -> CVPixelBuffer {
+        var buffer: CVPixelBuffer?
+        CVPixelBufferCreate(kCFAllocatorDefault, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
+        guard let buffer else { throw CocoaError(.featureUnsupported) }
+        return buffer
     }
 
     private static func checkWordOverlap() {

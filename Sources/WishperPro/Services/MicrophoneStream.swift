@@ -50,24 +50,32 @@ enum WAV {
     }
 }
 
-/// Converts microphone or file buffers to PCM16 24 kHz mono, keeping resampler state between chunks.
+/// Converts microphone or file buffers (to PCM16 24 kHz mono by default), keeping resampler state between chunks.
 final class PCMConverter {
     private let converter: AVAudioConverter
 
-    init?(from inputFormat: AVAudioFormat) {
+    var inputFormat: AVAudioFormat { converter.inputFormat }
+
+    init?(from inputFormat: AVAudioFormat, to outputFormat: AVAudioFormat = PCM16.format) {
         guard inputFormat.sampleRate > 0, inputFormat.channelCount > 0,
-              let converter = AVAudioConverter(from: inputFormat, to: PCM16.format)
+              let converter = AVAudioConverter(from: inputFormat, to: outputFormat)
         else { return nil }
         converter.downmix = true
         self.converter = converter
     }
 
-    /// A buffer in another format (a late one from before a device switch) makes the converter fail: it is dropped.
+    /// The converted samples as PCM16 bytes (the default output format).
     func convert(_ buffer: AVAudioPCMBuffer) -> Data {
-        let ratio = PCM16.sampleRate / buffer.format.sampleRate
+        guard let output = convertBuffer(buffer), let samples = output.int16ChannelData else { return Data() }
+        return Data(bytes: samples[0], count: Int(output.frameLength) * 2)
+    }
+
+    /// A buffer in another format (a late one from before a device switch) makes the converter fail: it is dropped.
+    func convertBuffer(_ buffer: AVAudioPCMBuffer) -> AVAudioPCMBuffer? {
+        let ratio = converter.outputFormat.sampleRate / buffer.format.sampleRate
         let capacity = AVAudioFrameCount((Double(buffer.frameLength) * ratio).rounded(.up)) + 32
         guard let output = AVAudioPCMBuffer(pcmFormat: converter.outputFormat, frameCapacity: capacity) else {
-            return Data()
+            return nil
         }
         let pending = PendingBuffer(buffer)
         var error: NSError?
@@ -79,8 +87,7 @@ final class PCMConverter {
             inputStatus.pointee = .haveData
             return next
         }
-        guard status != .error, let samples = output.int16ChannelData else { return Data() }
-        return Data(bytes: samples[0], count: Int(output.frameLength) * 2)
+        return status == .error ? nil : output
     }
 }
 
