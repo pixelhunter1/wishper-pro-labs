@@ -164,7 +164,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private func end(with error: Error?) {
         Task { [self] in
             try? await stream?.stopCapture()
-            try? await close()
+            // stop() or cancel() may have closed the file already; then they report it, not this path.
+            guard let end = await markClosed() else { return }
+            try? await writer.finish(at: end)
             onEnded?(error)
         }
     }
