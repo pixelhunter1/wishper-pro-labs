@@ -3,11 +3,13 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 APP_NAME="Wishper Pro Dev.app"
-APP_PATH="/tmp/$APP_NAME"
+APP_PATH="$HOME/Applications/$APP_NAME"
+LEGACY_APP_PATH="/tmp/$APP_NAME"
 BUNDLE_ID="com.wishper.pro.dev"
 EXECUTABLE_NAME="WishperPro"
 ICON_PATH="$ROOT_DIR/Assets/AppIcon.icns"
 ENTITLEMENTS_PATH="$ROOT_DIR/Resources/WishperPro.entitlements"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister"
 
 detect_signing_identity() {
   if [[ -n "${WISHPER_SIGN_IDENTITY:-}" ]]; then
@@ -82,6 +84,11 @@ main() {
   echo "[2/5] Using signing identity: $signing_identity"
 
   echo "[3/5] Creating dev app bundle at $APP_PATH"
+  if [[ -d "$LEGACY_APP_PATH" ]]; then
+    echo "      Removing old bundle at $LEGACY_APP_PATH"
+    rm -rf "$LEGACY_APP_PATH"
+  fi
+  mkdir -p "$HOME/Applications"
   rm -rf "$APP_PATH"
   mkdir -p "$APP_PATH/Contents/MacOS" "$APP_PATH/Contents/Resources"
   cp ".build/debug/$EXECUTABLE_NAME" "$APP_PATH/Contents/MacOS/$EXECUTABLE_NAME"
@@ -97,6 +104,7 @@ main() {
     --entitlements "$ENTITLEMENTS_PATH" \
     "$APP_PATH"
   xattr -dr com.apple.quarantine "$APP_PATH" || true
+  "$LSREGISTER" -f "$APP_PATH" 2>/dev/null || true
 
   if [[ "$selftest" == true ]]; then
     local audio_path="${TMPDIR:-/tmp}/wishper-selftest.aiff"

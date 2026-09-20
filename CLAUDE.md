@@ -11,10 +11,10 @@ swift build
 # Verificações offline (sem rede nem bundle)
 .build/debug/WishperPro --selftest
 
-# Bundle dev em /tmp + verificações online (ao vivo, plano B, limpeza, narração e GPT-Live) com a API key do Keychain
+# Bundle dev em ~/Applications + verificações online (ao vivo, plano B, limpeza, narração e GPT-Live) com a API key do Keychain
 ./scripts/run-dev-app.sh --selftest
 
-# Compilar e correr em modo dev (cria app bundle em /tmp)
+# Compilar e correr em modo dev (cria app bundle em ~/Applications)
 ./scripts/run-dev-app.sh
 
 # Compilar e instalar release (~/Applications/Wishper Pro.app)

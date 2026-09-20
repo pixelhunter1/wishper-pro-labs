@@ -208,7 +208,7 @@ Design documents live in [`docs/superpowers/specs`](docs/superpowers/specs) and 
 swift build                          # debug build
 .build/debug/WishperPro --selftest   # 196 offline checks, no network
 ./scripts/run-dev-app.sh --selftest  # the offline checks plus live, fallback, cleanup, narration and GPT-Live against the API
-./scripts/run-dev-app.sh             # a dev app bundle in /tmp, for testing the interface
+./scripts/run-dev-app.sh             # a dev app bundle in ~/Applications, for testing the interface
 ```
 
 There is no test target: the checks live in `SelfTest.swift` and run from the binary. Swift Package Manager only, no external dependencies.
