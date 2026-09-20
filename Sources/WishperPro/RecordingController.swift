@@ -391,6 +391,9 @@ final class RecordingController: ObservableObject {
 
     /// The file is closed: translated when asked, or shown in Finder with "Gravação guardada" or why it stopped.
     private func finish(_ url: URL, failure: Error?) {
+        if #available(macOS 15, *), let recorder = recorder as? ScreenRecorder {
+            DiagnosticLog.write("gravação: \(recorder.voiceBlocks) blocos de voz, perdidos \(recorder.voiceDrops.summary)")
+        }
         clearRecording()
         soundCuePlayer.playStopCue()
         if #available(macOS 15, *), let translator, let target = translationTarget,
@@ -440,6 +443,10 @@ final class RecordingController: ObservableObject {
         translationTask = Task { [weak self] in
             let result = await translator.finish()
             guard !Task.isCancelled, let self else { return }
+            DiagnosticLog.write(
+                "tradução: \(result.phrases.count) frases, \(result.failed) falhadas"
+                    + (result.firstError.map { ", primeiro erro: \($0)" } ?? "")
+            )
             defer {
                 self.translator = nil
                 self.translationTask = nil
@@ -531,6 +538,7 @@ final class RecordingController: ObservableObject {
     }
 
     private func fail(_ error: ScreenRecordingError) {
+        DiagnosticLog.write("erro: \(error.localizedDescription)")
         setPhase(.failed(error.localizedDescription))
     }
 

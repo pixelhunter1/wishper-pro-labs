@@ -52,6 +52,24 @@ enum RecordingFile {
     }
 }
 
+/// Why voice blocks were lost after time zero. Blocks before time zero are not counted: nothing is written then.
+struct VoiceDrops: Sendable, Equatable {
+    /// The converter refused the block (a late one from before a device switch).
+    var conversion = 0
+    /// More than 50 ms away from where the samples say it belongs (see `voiceTime`).
+    var outOfSync = 0
+    /// The file could not take more data just then.
+    var notReady = 0
+    /// The write itself failed.
+    var write = 0
+
+    var total: Int { conversion + outOfSync + notReady + write }
+
+    var summary: String {
+        "\(total) (conversão \(conversion), fora de tempo \(outOfSync), ocupado \(notReady), escrita \(write))"
+    }
+}
+
 /// Writes a recording: H.264 video, then the voice (AAC mono) and the Mac's sound (AAC stereo) when present, all on
 /// the capture clock and starting at `begin(at:)`. Not thread-safe: its owner calls it on one queue.
 final class RecordingWriter {
@@ -75,6 +93,8 @@ final class RecordingWriter {
     private var lastFrameTime = CMTime.negativeInfinity
     private var voiceConverter: PCMConverter?
     private var nextVoiceTime: CMTime?
+    /// Voice blocks lost after time zero, by reason, for the diagnostic log.
+    private(set) var drops = VoiceDrops()
 
     /// The writer's error once it can no longer write (e.g. the disk is full).
     var failure: Error? {
@@ -124,16 +144,27 @@ final class RecordingWriter {
     /// `voiceTime`). Returns when the block was written, in seconds since time zero, or nil when it was dropped.
     @discardableResult
     func appendVoice(_ buffer: AVAudioPCMBuffer, at time: CMTime) -> TimeInterval? {
+        // Before time zero (the countdown) nothing is written: that is not a drop.
         guard let voice, let start, time >= start else { return nil }
         if voiceConverter?.inputFormat != buffer.format {
             voiceConverter = PCMConverter(from: buffer.format, to: Self.voiceFormat)
         }
-        guard let converted = voiceConverter?.convertBuffer(buffer), converted.frameLength > 0,
-              let presentation = Self.voiceTime(next: nextVoiceTime, block: time),
-              voice.isReadyForMoreMediaData,
-              let sample = Self.sampleBuffer(converted, at: presentation),
-              voice.append(sample)
-        else { return nil }
+        guard let converted = voiceConverter?.convertBuffer(buffer), converted.frameLength > 0 else {
+            drops.conversion += 1
+            return nil
+        }
+        guard let presentation = Self.voiceTime(next: nextVoiceTime, block: time) else {
+            drops.outOfSync += 1
+            return nil
+        }
+        guard voice.isReadyForMoreMediaData else {
+            drops.notReady += 1
+            return nil
+        }
+        guard let sample = Self.sampleBuffer(converted, at: presentation), voice.append(sample) else {
+            drops.write += 1
+            return nil
+        }
         nextVoiceTime = presentation + CMTime(value: CMTimeValue(converted.frameLength), timescale: 48_000)
         return (presentation - start).seconds
     }

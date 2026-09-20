@@ -88,6 +88,9 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
     private var pendingLevel = Data()
     private var isClosed = false
     private var reportedFailure = false
+    /// Voice blocks the file took, and why it lost the others, for the diagnostic log.
+    private(set) var voiceBlocks = 0
+    var voiceDrops: VoiceDrops { writer.drops }
 
     init(filter: SCContentFilter, microphone: RecordingMicrophone, systemAudio: Bool, url: URL) throws {
         let size = RecordingSize.output(points: filter.contentRect.size, scale: CGFloat(filter.pointPixelScale))
@@ -164,6 +167,7 @@ final class ScreenRecorder: NSObject, SCStreamOutput, SCStreamDelegate, @uncheck
         case .microphone:
             guard let buffer = Self.pcmBuffer(sample) else { return }
             let written = writer.appendVoice(buffer, at: sample.presentationTimeStamp)
+            if written != nil { voiceBlocks += 1 }
             deliverMicrophone(buffer, writtenAt: written)
         @unknown default:
             break
