@@ -45,6 +45,54 @@ struct LiveVoice: Identifiable, Hashable, Sendable {
     }
 }
 
+/// How the narrator should sound. The voice picks the timbre and the accent; this picks the delivery, which is what
+/// makes a reading sound like a person rather than a system voice.
+enum NarrationTone: String, CaseIterable, Identifiable, Sendable {
+    case calm
+    case conversational
+    case lively
+    case documentary
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .calm: return "Calmo"
+        case .conversational: return "Conversa"
+        case .lively: return "Animado"
+        case .documentary: return "Documentário"
+        }
+    }
+
+    var detail: String {
+        switch self {
+        case .calm: return "Suave e contido. O que a app usava antes."
+        case .conversational: return "Como quem explica a um colega, com o à-vontade da fala normal."
+        case .lively: return "Desperto e com energia, para demonstrações e redes sociais."
+        case .documentary: return "Pausado e seguro, com peso nas palavras que contam."
+        }
+    }
+
+    /// Added to the narrator's brief. Kept as delivery only: never a licence to change the words.
+    var instruction: String {
+        switch self {
+        case .calm:
+            return "Read in a soft, calm, natural voice."
+        case .conversational:
+            return "Read the way a person explains something to a colleague: warm and relaxed, with the light stresses and rhythm of ordinary speech."
+        case .lively:
+            return "Read with energy and a bright, engaged tone, leaning into the words that carry the point, as a good demo narrator would."
+        case .documentary:
+            return "Read at a measured pace with a confident, grounded tone, giving weight to the words that matter, as a documentary narrator would."
+        }
+    }
+
+    /// A saved tone that no longer exists becomes the default.
+    static func stored(_ value: String?) -> NarrationTone {
+        NarrationTone(rawValue: value ?? "") ?? .calm
+    }
+}
+
 enum GPTLiveError: LocalizedError {
     case unauthorized
     case timeout
@@ -76,7 +124,8 @@ actor GPTLiveReader {
 
     static let endpoint = URL(string: "wss://api.openai.com/v1/live/sessions")!
     static let model = "gpt-live-1"
-    static let narrator = "You are a voice-over narrator for a screen recording. Never converse, never greet, never add or change words. When you receive commentary, read it aloud exactly as written, word for word, in a soft, calm, natural voice. Then stay silent."
+    /// The part of the narrator's brief that never changes; `NarrationTone` adds how it should sound.
+    static let narrator = "You are a voice-over narrator for a screen recording. Never converse, never greet, never add or change words. When you receive commentary, read it aloud exactly as written, word for word. Take your time: speak at an unhurried narration pace of about 120 words per minute, the pace of someone explaining their own screen, not of someone reading a script quickly. Then stay silent."
     /// Output audio at or above this level (dBFS) is speech; the rest is the silence GPT-Live streams between texts.
     static let speechLevel = -45.0
     /// Share of a text's words its transcript must hold for the reading to count as word for word.
@@ -89,6 +138,7 @@ actor GPTLiveReader {
 
     private let apiKey: String
     private let voice: String
+    private let tone: NarrationTone
     private var session: URLSession?
     private var task: URLSessionWebSocketTask?
     private var isStarted = false
@@ -104,9 +154,10 @@ actor GPTLiveReader {
     private var lastSpeech: ContinuousClock.Instant?
     private var isReading = false
 
-    init(apiKey: String, voice: String) {
+    init(apiKey: String, voice: String, tone: NarrationTone = .calm) {
         self.apiKey = apiKey
         self.voice = voice
+        self.tone = tone
     }
 
     /// Reads `text` aloud. A reading that misses words is read again once, and the one with more words stays.
@@ -151,14 +202,16 @@ actor GPTLiveReader {
         isStarted = false
     }
 
-    nonisolated static func startJSON(voice: String) -> String {
+    nonisolated static func startJSON(voice: String, tone: NarrationTone = .calm) -> String {
         json([
             "type": "session.start",
             "session": [
                 "model": model,
-                "instructions": narrator,
+                "instructions": "\(narrator) \(tone.instruction)",
                 "audio": [
                     "format": ["type": "audio/pcm", "rate": 24_000] as [String: Any],
+                    // GPT-Live has no speed parameter: session.audio.output.speed is refused. The pace is asked for
+                    // in the narrator's brief instead.
                     "output": ["voice": voice],
                 ] as [String: Any],
             ] as [String: Any],
@@ -252,7 +305,7 @@ actor GPTLiveReader {
         self.task = task
         isClosedByServer = false
         task.resume()
-        send(Self.startJSON(voice: voice))
+        send(Self.startJSON(voice: voice, tone: tone))
         Task { await self.receive(from: task) }
         Task {
             try? await Task.sleep(for: Self.startTimeout)
@@ -363,18 +416,19 @@ enum VoicePreview {
         }
     }
 
-    static func cachedURL(voice: String, language: SupportedLanguage) -> URL {
+    /// The tone is part of the name: the same voice read calmly and read lively are different samples.
+    static func cachedURL(voice: String, language: SupportedLanguage, tone: NarrationTone) -> URL {
         FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
             .appendingPathComponent(Bundle.main.bundleIdentifier ?? "com.wishper.pro", isDirectory: true)
             .appendingPathComponent("Vozes", isDirectory: true)
-            .appendingPathComponent("\(voice)-\(language.rawValue).wav")
+            .appendingPathComponent("\(voice)-\(tone.rawValue)-\(language.rawValue).wav")
     }
 
     /// The sample's file: from the cache, or read now.
-    static func sample(voice: String, language: SupportedLanguage, apiKey: String) async throws -> URL {
-        let url = cachedURL(voice: voice, language: language)
+    static func sample(voice: String, language: SupportedLanguage, tone: NarrationTone, apiKey: String) async throws -> URL {
+        let url = cachedURL(voice: voice, language: language, tone: tone)
         if FileManager.default.fileExists(atPath: url.path) { return url }
-        let reader = GPTLiveReader(apiKey: apiKey, voice: voice)
+        let reader = GPTLiveReader(apiKey: apiKey, voice: voice, tone: tone)
         let reading: GPTLiveReader.Reading
         do {
             reading = try await reader.read(sentence(language))

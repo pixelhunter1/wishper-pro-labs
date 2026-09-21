@@ -506,6 +506,12 @@ private struct RecordingPane: View {
                         }
                     }
                 }
+                Picker("Tom", selection: $recording.tone) {
+                    ForEach(NarrationTone.allCases) { tone in
+                        Text(tone.title).tag(tone)
+                    }
+                }
+                .help(recording.tone.detail)
                 LabeledContent("Amostra") {
                     HStack(spacing: 8) {
                         if preview.isLoading {
@@ -517,6 +523,7 @@ private struct RecordingPane: View {
                             preview.play(
                                 voice: recording.voiceID,
                                 language: SupportedLanguage(rawValue: recording.translationLanguage) ?? .english,
+                                tone: recording.tone,
                                 apiKey: apiKey
                             )
                         }
@@ -532,7 +539,7 @@ private struct RecordingPane: View {
             } footer: {
                 Text(apiKey == nil
                     ? "Precisa da API key (Geral)."
-                    : "Vozes da OpenAI (GPT-Live). A língua escolhe-se no menu, em Traduzir para.")
+                    : "Vozes da OpenAI (GPT-Live). A língua escolhe-se no menu, em Traduzir para. \(recording.tone.detail)")
             }
 
             Section {
@@ -558,14 +565,14 @@ private final class VoicePreviewPlayer: ObservableObject {
     @Published private(set) var error: String?
     private var player: AVAudioPlayer?
 
-    func play(voice: String, language: SupportedLanguage, apiKey: String) {
+    func play(voice: String, language: SupportedLanguage, tone: NarrationTone, apiKey: String) {
         player?.stop()
         error = nil
         isLoading = true
         Task {
             defer { isLoading = false }
             do {
-                let url = try await VoicePreview.sample(voice: voice, language: language, apiKey: apiKey)
+                let url = try await VoicePreview.sample(voice: voice, language: language, tone: tone, apiKey: apiKey)
                 let player = try AVAudioPlayer(contentsOf: url)
                 player.play()
                 self.player = player

@@ -32,9 +32,10 @@ extension TranslationSteps {
         source: SupportedLanguage,
         target: SupportedLanguage,
         dictionary: [String],
-        voice: String
+        voice: String,
+        tone: NarrationTone = .calm
     ) -> TranslationSteps {
-        let reader = GPTLiveReader(apiKey: apiKey, voice: voice)
+        let reader = GPTLiveReader(apiKey: apiKey, voice: voice, tone: tone)
         let languages = source.isoCode.map { [$0] } ?? []
         let sourceName = source == .auto ? nil : source.translationName
         return TranslationSteps(
@@ -204,6 +205,13 @@ actor RecordingTranslator {
             guard !source.isEmpty else { return }
             let context = context
             let text = try await Self.retrying { try await steps.translate(source, context) }
+            // Counts only, never the text: is the translation shorter than what was said, or is it the reading
+            // that runs fast? The two have opposite fixes.
+            DiagnosticLog.write(String(
+                format: "texto: frase aos %.2f s, falada %.2f s, %d caracteres → %d traduzidos (%.0f%%)",
+                phrase.start, phrase.end - phrase.start, source.count, text.count,
+                source.isEmpty ? 0 : Double(text.count) / Double(source.count) * 100
+            ))
             self.context = Array((self.context + [.init(source: source, translation: text)]).suffix(3))
             // A hesitation: nothing to read.
             guard !text.isEmpty else { return }
@@ -225,6 +233,12 @@ actor RecordingTranslator {
         let steps = steps
         do {
             let audio = try await Self.retrying { try await steps.read(text) }
+            let spoken = phrase.end - phrase.start
+            let read = Double(audio.count / 2) / PCM16.sampleRate
+            DiagnosticLog.write(String(
+                format: "leitura: frase aos %.2f s, %.2f s lidos para %.2f s de fala (%.0f%%), %d caracteres",
+                phrase.start, read, spoken, spoken > 0 ? read / spoken * 100 : 0, text.count
+            ))
             translated.append(TranslatedPhrase(start: phrase.start, end: phrase.end, text: text, audio: audio))
         } catch {
             record(error, phrase, text: text)

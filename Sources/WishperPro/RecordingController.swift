@@ -83,6 +83,7 @@ private enum RecordingDefaultsKey {
     static let translation = "wishper.recording_translation"
     static let voice = "wishper.recording_voice"
     static let subtitles = "wishper.recording_subtitles"
+    static let tone = "wishper.recording_tone"
 }
 
 /// What the recording's translation takes from dictation: the API key, the dictionary and the spoken language.
@@ -117,6 +118,9 @@ final class RecordingController: ObservableObject {
     /// `""` records without translating; otherwise a `SupportedLanguage.rawValue`.
     @Published var translationLanguage = UserDefaults.standard.string(forKey: RecordingDefaultsKey.translation) ?? "" {
         didSet { UserDefaults.standard.set(translationLanguage, forKey: RecordingDefaultsKey.translation) }
+    }
+    @Published var tone = NarrationTone.stored(UserDefaults.standard.string(forKey: RecordingDefaultsKey.tone)) {
+        didSet { UserDefaults.standard.set(tone.rawValue, forKey: RecordingDefaultsKey.tone) }
     }
     @Published var voiceID = LiveVoice.stored(UserDefaults.standard.string(forKey: RecordingDefaultsKey.voice)) {
         didSet { UserDefaults.standard.set(voiceID, forKey: RecordingDefaultsKey.voice) }
@@ -427,7 +431,8 @@ final class RecordingController: ObservableObject {
             source: context.source,
             target: target,
             dictionary: context.dictionary,
-            voice: voiceID
+            voice: voiceID,
+            tone: tone
         ))
     }
 
