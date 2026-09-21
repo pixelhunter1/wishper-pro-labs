@@ -50,7 +50,10 @@ struct OpenAITextProcessor {
         urlRequest.setValue("application/json", forHTTPHeaderField: "Content-Type")
         urlRequest.httpBody = Self.requestJSON(for: request)
         let sentRequest = urlRequest
-        let (data, statusCode) = try await Self.withTimeout(Self.timeout(forCharacters: request.text.count)) {
+        let limit = request.narration == nil
+            ? Self.timeout(forCharacters: request.text.count)
+            : Self.narrationTimeout(forCharacters: request.text.count)
+        let (data, statusCode) = try await Self.withTimeout(limit) {
             let (data, response) = try await URLSession.shared.data(for: sentRequest)
             return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
         }
@@ -71,9 +74,17 @@ struct OpenAITextProcessor {
         style != .unchanged || translating
     }
 
-    /// 4 s plus 1 s per 500 characters, so long dictations are not cut off.
+    /// 4 s plus 1 s per 500 characters, so long dictations are not cut off. Someone is waiting for a dictation with
+    /// the bubble open, so it gives up early and pastes what was transcribed.
     static func timeout(forCharacters count: Int) -> Duration {
         .seconds(4 + count / 500)
+    }
+
+    /// A narration phrase gets far longer: nobody is waiting on it (the recording is still going), a phrase is ~80
+    /// characters so the dictation timeout would be a flat 4 s, and a phrase that gives up costs the whole
+    /// translation — "Tradução falhou: a IA não respondeu a tempo" — where a dictation only loses its cleanup.
+    static func narrationTimeout(forCharacters count: Int) -> Duration {
+        .seconds(20 + count / 500)
     }
 
     /// The model must clean, not answer: an empty or much longer result is refused.
