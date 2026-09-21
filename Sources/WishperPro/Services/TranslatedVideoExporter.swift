@@ -30,6 +30,10 @@ enum SubtitleStyle: String, CaseIterable, Identifiable, Sendable {
 /// Where each reading goes on the video's timeline: at the start of its phrase, sped up (pitch kept, up to 1.25×)
 /// when it is longer than the time until the next phrase. If it still does not fit, the next one waits for it, and the
 /// delay goes away at the next pause long enough.
+///
+/// A reading shorter than its phrase is left alone. Stretching it to cover the phrase was tried and reverted: at 0.75×
+/// the time-stretch makes the voice sound robotic, and the longer reading pushes the next phrase back, so the recording
+/// came out worse on both counts. A reading that is too short is a translation problem, not a placement one.
 enum VoicePlacement {
     static let gap: TimeInterval = 0.08
     static let maxRate = 1.25
@@ -145,6 +149,18 @@ enum TranslatedVideoExporter {
         let cues = SubtitleCues.make(zip(phrases, zip(slots, lengths)).map { phrase, placed in
             (phrase.text, placed.0.start, placed.0.start + placed.1 / placed.0.rate)
         })
+
+        // Where each reading landed against the phrase it translates: a slot that starts after its phrase means the
+        // reading before it did not fit and pushed this one along.
+        for (index, (phrase, placed)) in zip(phrases, zip(slots, lengths)).enumerated() {
+            let (slot, length) = placed
+            DiagnosticLog.write(String(
+                format: "frase %d: falada %.2f–%.2f s, lida %.2f–%.2f s (%.2f s a %.2fx), desvio %+.2f s",
+                index + 1, phrase.start, phrase.end,
+                slot.start, slot.start + length / slot.rate, length, slot.rate,
+                slot.start - phrase.start
+            ))
+        }
 
         let audioURL = work.appendingPathComponent("audio.m4a")
         try await writeAudio(phrases: phrases, slots: slots, original: asset, duration: duration, to: audioURL)
@@ -263,7 +279,7 @@ enum TranslatedVideoExporter {
         }
     }
 
-    /// A reading (PCM16 24 kHz) as 48 kHz float samples, sped up by `rate` with the pitch kept.
+    /// A reading (PCM16 24 kHz) as 48 kHz float samples, sped up or slowed down by `rate` with the pitch kept.
     static func samples(of pcm16: Data, rate: Double) -> [Float]? {
         let frames = pcm16.count / 2
         guard frames > 0,
@@ -288,11 +304,12 @@ enum TranslatedVideoExporter {
             return next
         }
         guard error == nil else { return nil }
-        let result = rate > 1.001 ? (try? stretched(converted, rate: rate)) ?? converted : converted
+        // Any rate away from 1 in either direction: a reading shorter than its phrase is slowed to cover it.
+        let result = abs(rate - 1) > 0.001 ? (try? stretched(converted, rate: rate)) ?? converted : converted
         return Array(UnsafeBufferPointer(start: result.floatChannelData![0], count: Int(result.frameLength)))
     }
 
-    /// Speeds audio up without changing its pitch, rendered offline.
+    /// Speeds audio up or slows it down without changing its pitch, rendered offline.
     private static func stretched(_ buffer: AVAudioPCMBuffer, rate: Double) throws -> AVAudioPCMBuffer {
         let engine = AVAudioEngine()
         let player = AVAudioPlayerNode()

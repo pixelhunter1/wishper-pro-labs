@@ -89,10 +89,12 @@ enum SelfTest {
         checkRecordingErrors()
         checkRecordingPhases()
         checkVoiceTiming()
+        checkVoiceResampling()
         checkPhraseDetector()
         checkNarrationRequest()
         checkLiveReaderProtocol()
         checkVoicePlacement()
+        if #available(macOS 15, *) { checkVoiceStretching() }
         checkSubtitleCues()
         checkTranslatedFileName()
         checkTranslationPhases()
@@ -629,6 +631,14 @@ enum SelfTest {
         check(OpenAITextProcessor.needsRequest(style: .natural, translating: false), "limpeza: Natural faz pedido")
         check(OpenAITextProcessor.timeout(forCharacters: 100) == .seconds(4), "limpeza: prazo de 4 s")
         check(OpenAITextProcessor.timeout(forCharacters: 1_500) == .seconds(7), "limpeza: mais 1 s por 500 caracteres")
+        // A phrase of a narration is ~80 characters: on the dictation's clock it would get a flat 4 s, and giving up
+        // there fails the whole translation instead of just a cleanup.
+        check(
+            OpenAITextProcessor.narrationTimeout(forCharacters: 80) == .seconds(20)
+                && OpenAITextProcessor.narrationTimeout(forCharacters: 80)
+                    > OpenAITextProcessor.timeout(forCharacters: 80) * 4,
+            "narração: uma frase espera 20 s, muito para lá do prazo do ditado"
+        )
 
         check(OpenAITextProcessor.accepts(output: "Olá.", input: "ãã olá olá"), "proteção: aceita texto mais curto")
         check(!OpenAITextProcessor.accepts(output: "", input: "olá"), "proteção: recusa texto vazio")
@@ -852,21 +862,21 @@ enum SelfTest {
         }
     }
 
-    private static func writeRecording(voice: Bool, systemAudio: Bool) async throws -> URL {
+    private static func writeRecording(voice: Bool, systemAudio: Bool, size: CGSize = CGSize(width: 320, height: 180)) async throws -> URL {
         let url = FileManager.default.temporaryDirectory.appendingPathComponent("wishper-selftest-\(UUID().uuidString).mov")
-        let writer = try RecordingWriter(url: url, videoSize: CGSize(width: 320, height: 180), voice: voice, systemAudio: systemAudio)
+        let writer = try RecordingWriter(url: url, videoSize: size, voice: voice, systemAudio: systemAudio)
         func time(_ seconds: Double) -> CMTime { CMTime(seconds: 1_000 + seconds, preferredTimescale: 48_000) }
         let mono48 = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 1)!
         let mono16 = AVAudioFormat(standardFormatWithSampleRate: 16_000, channels: 1)!
         let stereo48 = AVAudioFormat(standardFormatWithSampleRate: 48_000, channels: 2)!
         // Before time zero: kept as the first frame, or dropped.
-        writer.appendVideo(try pixelBuffer(), at: time(-0.5))
+        writer.appendVideo(try pixelBuffer(size), at: time(-0.5))
         writer.appendVoice(sineBuffer(format: mono48, frames: 4_800, startFrame: 0), at: time(-0.4))
         if let early = RecordingWriter.sampleBuffer(sineBuffer(format: stereo48, frames: 4_800, startFrame: 0), at: time(-0.4)) {
             writer.appendSystemAudio(early)
         }
         writer.begin(at: time(0))
-        writer.appendVideo(try pixelBuffer(), at: time(0.5))
+        writer.appendVideo(try pixelBuffer(size), at: time(0.5))
         for part in 0..<20 {
             let seconds = Double(part) / 10
             if part < 10 {
@@ -906,9 +916,9 @@ enum SelfTest {
         )
     }
 
-    private static func pixelBuffer() throws -> CVPixelBuffer {
+    private static func pixelBuffer(_ size: CGSize = CGSize(width: 320, height: 180)) throws -> CVPixelBuffer {
         var buffer: CVPixelBuffer?
-        CVPixelBufferCreate(kCFAllocatorDefault, 320, 180, kCVPixelFormatType_32BGRA, nil, &buffer)
+        CVPixelBufferCreate(kCFAllocatorDefault, Int(size.width), Int(size.height), kCVPixelFormatType_32BGRA, nil, &buffer)
         guard let buffer else { throw CocoaError(.featureUnsupported) }
         return buffer
     }
@@ -937,15 +947,45 @@ enum SelfTest {
             check(abs(quiet[1].start - 5.3) < 0.04 && abs(quiet[1].end - 7.06) < 0.04, "frases: a 2.ª vai de 5,3 a 7,06 s (\(format(quiet[1].start))–\(format(quiet[1].end)))")
             check(abs(Double(quiet[0].pcm.count) / 48_000 - (quiet[0].end - quiet[0].start)) < 0.03, "frases: o áudio da frase tem a sua duração")
         }
+        // An "ok" or a "hmm" between two thoughts: too short to stand alone, so it waits and joins what follows,
+        // instead of becoming a phrase of its own with no context.
+        let marker = detectPhrases(
+            [(1, false), (0.5, true), (0.8, false), (2.5, true), (1.5, false)],
+            speech: -45, noise: -70
+        )
+        check(
+            marker.count == 1 && (marker.first.map { $0.start < 1.6 && $0.end > 4.5 } ?? false),
+            "frases: um \"ok\" solto junta-se à frase seguinte (\(marker.count) frase\(marker.count == 1 ? "" : "s"))"
+        )
+        // …but if nothing follows, it still gets said.
+        let alone = detectPhrases([(1, false), (0.5, true), (4, false)], speech: -45, noise: -70)
+        check(
+            alone.count == 1 && (alone.first.map { $0.end - $0.start < 1.2 } ?? false),
+            "frases: um \"ok\" sem nada a seguir continua a ser dito (\(alone.count) frase)"
+        )
         let loud = detectPhrases(pattern, speech: -30, noise: -50)
         check(
             loud.count == 2 && zip(loud, quiet).allSatisfy { abs($0.start - $1.start) < 0.04 && abs($0.end - $1.end) < 0.04 },
             "frases: o limiar acompanha o ruído (sala a −50 dBFS)"
         )
-        let long = detectPhrases([(0.5, false), (20, true), (1, false)], speech: -45, noise: -70)
+        // Past maxPhrase a phrase is cut, and the cut lands in a gap between words: here 0.3 s of quiet, too short to
+        // close the phrase on its own but quiet enough to cut at.
+        let gaps: [(seconds: Double, speech: Bool)] = [
+            (0.5, false), (6, true), (0.3, false), (6, true), (0.3, false), (6, true), (1, false),
+        ]
+        let cut = detectPhrases(gaps, speech: -45, noise: -70)
         check(
-            long.count == 2 && long[0].end - long[0].start <= 15.2 && abs(long[1].end - 20.66) < 0.04,
-            "frases: 20 s seguidos são cortados em 2 frases"
+            cut.count >= 2 && cut.allSatisfy { $0.end - $0.start <= PhraseDetector.maxPhrase + 0.4 },
+            "frases: fala longa parte-se numa pausa em \(cut.count) frases, nenhuma acima de \(format(PhraseDetector.maxPhrase)) s"
+        )
+        // Speech with no gap at all has nowhere good to cut: it is left whole until the hard limit, rather than
+        // sliced through the middle of a word.
+        let seamless = detectPhrases([(0.5, false), (20, true), (1, false)], speech: -45, noise: -70)
+        // The end lands just past the last speech (20.5 s); exactly how far depends on where the cut fell.
+        check(
+            seamless.count == 2 && seamless.allSatisfy { $0.end - $0.start <= PhraseDetector.hardMaxPhrase + 0.4 }
+                && (seamless.last.map { $0.end >= 20.5 && $0.end <= 20.7 } ?? false),
+            "frases: 20 s sem uma única pausa só se partem ao fim de \(format(PhraseDetector.hardMaxPhrase)) s (\(seamless.map { "\(format($0.start))–\(format($0.end))" }.joined(separator: ", ")))"
         )
         check(detectPhrases([(1, false), (0.1, true), (1, false)], speech: -40, noise: -70).isEmpty, "frases: um estalo de 100 ms não é frase")
     }
@@ -1048,6 +1088,25 @@ enum SelfTest {
                 && (audio?["format"] as? [String: Any])?["rate"] as? Int == 24_000,
             "GPT-Live: session.start com o modelo, o narrador, a voz e PCM 24 kHz"
         )
+        // The tone reaches the session, and never loosens the rule that the words are read as written.
+        for tone in NarrationTone.allCases {
+            let instructions = (jsonObject(GPTLiveReader.startJSON(voice: "meridian", tone: tone))?["session"]
+                as? [String: Any])?["instructions"] as? String ?? ""
+            check(
+                instructions.contains(tone.instruction) && instructions.contains("word for word")
+                    && instructions.contains("never add or change words"),
+                "GPT-Live: o tom \(tone.title) vai nas instruções sem soltar as palavras"
+            )
+        }
+        check(
+            Set(NarrationTone.allCases.map(\.instruction)).count == NarrationTone.allCases.count,
+            "GPT-Live: cada tom pede uma entrega diferente"
+        )
+        check(
+            VoicePreview.cachedURL(voice: "meridian", language: .english, tone: .calm)
+                != VoicePreview.cachedURL(voice: "meridian", language: .english, tone: .lively),
+            "GPT-Live: a amostra em cache separa os tons"
+        )
         let commentary = jsonObject(GPTLiveReader.commentaryJSON("Diz \"olá\""))
         check(
             commentary?["type"] as? String == "session.commentary.append"
@@ -1076,6 +1135,14 @@ enum SelfTest {
             let reading = try await reader.read(text)
             await reader.close()
             let seconds = Double(reading.audio.count / 2) / PCM16.sampleRate
+            // The pace decides whether a reading covers the phrase it translates: a person narrating their own screen
+            // runs at ~11 characters a second, GPT-Live at ~15. Asking for a pace in the brief did not move it
+            // (12.5 and 14.8 on two runs), so this only catches a clear regression and reports the figure.
+            let pace = seconds > 0 ? Double(text.count) / seconds : 0
+            check(
+                pace <= 20,
+                "GPT-Live: ritmo de leitura \(format(pace)) caracteres/s (quem narra faz ~11)"
+            )
             check(
                 GPTLiveReader.wordsKept(text, in: reading.transcript) >= GPTLiveReader.minimumKept && seconds > 1,
                 "GPT-Live: lê a frase palavra por palavra (\(format(seconds)) s: \(reading.transcript))"
@@ -1103,6 +1170,12 @@ enum SelfTest {
             VoicePlacement.place([(1, 2), (5, 2)], end: 10) == [.init(start: 1, rate: 1), .init(start: 5, rate: 1)],
             "encaixe: o que cabe fica no início da frase, a 1×"
         )
+        // A reading shorter than its phrase is left at 1×: stretching it sounded robotic and pushed the next phrase.
+        let short = VoicePlacement.place([(1, 2), (6, 1)], end: 10)
+        check(
+            short[0] == .init(start: 1, rate: 1) && short[1] == .init(start: 6, rate: 1),
+            "encaixe: uma leitura curta fica a 1×, sem esticar"
+        )
         let faster = VoicePlacement.place([(1, 4.4), (5, 1)], end: 10)
         check(
             faster[0].start == 1 && abs(faster[0].rate - 4.4 / 3.92) < 0.001 && faster[1] == .init(start: 5, rate: 1),
@@ -1113,6 +1186,27 @@ enum SelfTest {
             late[0].rate == VoicePlacement.maxRate && abs(late[1].start - 5.8) < 0.001 && late[2] == .init(start: 9, rate: 1),
             "encaixe: o que não cabe atrasa a seguinte, e o atraso some na pausa"
         )
+    }
+
+    /// The rate `VoicePlacement` asks for must actually reach the audio: a reading that is only placed at 0.75× and
+    /// handed over untouched lasts its own length, and everything timed from it (the next slot, the subtitles) is off.
+    @available(macOS 15, *)
+    private static func checkVoiceStretching() {
+        let reading = syntheticVoice([(0.5, true)], speech: -20, noise: -90)
+        let plain = TranslatedVideoExporter.samples(of: reading, rate: 1)?.count ?? 0
+        guard plain > 0 else {
+            check(false, "velocidade: a leitura converte-se em amostras")
+            return
+        }
+        for rate in [0.75, 1.25] {
+            let count = TranslatedVideoExporter.samples(of: reading, rate: rate)?.count ?? 0
+            let expected = Double(plain) / rate
+            let off = abs(Double(count) - expected) / expected
+            check(
+                off < 0.05,
+                "velocidade: a \(format(rate))× a leitura dura \(format(Double(count) / expected))× do pedido"
+            )
+        }
     }
 
     private static func checkSubtitleCues() {
@@ -1279,6 +1373,33 @@ enum SelfTest {
         } catch {
             check(false, "vídeo traduzido: exportar (\(error.localizedDescription))")
         }
+        await checkFullScreenExport()
+    }
+
+    /// A full screen is far bigger than the 320x180 above: an ultrawide display at 3440x1440 must export too.
+    @available(macOS 15, *)
+    private static func checkFullScreenExport() async {
+        let size = CGSize(width: 3_440, height: 1_440)
+        let reading = syntheticVoice([(0.5, true)], speech: -20, noise: -90)
+        let phrases = [TranslatedPhrase(start: 0.5, end: 1.0, text: "Hello there, this is a test.", audio: reading)]
+        for style in SubtitleStyle.allCases {
+            do {
+                let original = try await writeRecording(voice: true, systemAudio: false, size: size)
+                defer { try? FileManager.default.removeItem(at: original) }
+                let output = FileManager.default.temporaryDirectory.appendingPathComponent("wishper-selftest-\(UUID().uuidString).mp4")
+                defer { try? FileManager.default.removeItem(at: output) }
+                try await TranslatedVideoExporter.export(original: original, phrases: phrases, subtitles: style, to: output)
+                let asset = AVURLAsset(url: output)
+                let video = try await asset.loadTracks(withMediaType: .video).first
+                let natural = try await video?.load(.naturalSize) ?? .zero
+                check(
+                    video != nil && natural == size,
+                    "ecrã inteiro (\(style.title)): exporta 3440x1440 (\(Int(natural.width))x\(Int(natural.height)))"
+                )
+            } catch {
+                check(false, "ecrã inteiro (\(style.title)): exportar (\(error.localizedDescription))")
+            }
+        }
     }
 
     /// RMS in dBFS of an audio track within each time window.
@@ -1389,6 +1510,32 @@ enum SelfTest {
 
     private static func jsonObject(_ text: String) -> [String: Any]? {
         try? JSONSerialization.jsonObject(with: Data(text.utf8)) as? [String: Any]
+    }
+
+    /// The built-in microphone of a MacBook Air runs at 96 kHz, so every block is resampled to the writer's 48 kHz.
+    /// Over a long recording the converted samples must still add up to the same amount of time: a converter that
+    /// gives even a little too much pushes the voice ahead of its own timestamps, and `voiceTime` then drops blocks.
+    private static func checkVoiceResampling() {
+        for inputRate in [96_000.0, 44_100.0, 48_000.0] {
+            guard let input = AVAudioFormat(standardFormatWithSampleRate: inputRate, channels: 1),
+                  let converter = PCMConverter(from: input, to: RecordingWriter.voiceFormat)
+            else {
+                check(false, "conversor: \(Int(inputRate)) Hz → 48 kHz (não abriu)")
+                continue
+            }
+            let blockFrames = Int(inputRate / 100)
+            var produced = 0
+            for block in 0..<200 {
+                let buffer = sineBuffer(format: input, frames: blockFrames, startFrame: block * blockFrames)
+                produced += Int(converter.convertBuffer(buffer)?.frameLength ?? 0)
+            }
+            let expected = Double(200 * blockFrames) * 48_000 / inputRate
+            let drift = (Double(produced) - expected) / expected
+            check(
+                abs(drift) < 0.001,
+                "conversor: \(Int(inputRate)) Hz → 48 kHz mantém a duração em 2 s (\(produced) de \(Int(expected)) amostras, \(format(drift * 100))%)"
+            )
+        }
     }
 
     private static func sineBuffer(format: AVAudioFormat, frames: Int, startFrame: Int) -> AVAudioPCMBuffer {
