@@ -14,8 +14,25 @@ struct PhraseDetector {
     // Calibration knobs, measured on a real 37 s recording (6 phrases) on 2026-09-19.
     static let speechAboveNoise = 12.0
     static let pause: TimeInterval = 0.6
+    /// Cutting phrases shorter than this was tried and reverted: each phrase is read on its own and every reading
+    /// leaves silence behind it (a reading covers ~72% of the time its phrase was spoken), so twice the phrases means
+    /// twice the pauses, and the narration comes out in fits and starts. Long phrases read better.
     static let maxPhrase: TimeInterval = 15
+    /// The earliest a phrase may be cut: `cut()` looks for the quietest moment between here and now.
+    static let cutAfter: TimeInterval = 6
+    /// Someone who does not pause at all is cut here whatever the levels say, rather than growing without end.
+    static let hardMaxPhrase: TimeInterval = 20
+    /// How close to the room's noise a moment must be to count as a real gap between words. Speech is
+    /// `speechAboveNoise` (12 dB) over the noise, so this sits well below it: cutting anywhere louder lands in the
+    /// middle of a word.
+    static let quietEnough = 5.0
     static let minSpeech: TimeInterval = 0.2
+    /// Speech shorter than this does not close a phrase of its own: an "ok" or a "hmm" between two thoughts would
+    /// otherwise become a phrase by itself, translated with no context and read in a third of the time it was said.
+    /// It waits instead, and joins whatever is said next.
+    static let minStandalone: TimeInterval = 1.2
+    /// …unless the pause grows this long, which means nothing is coming and the short phrase stands alone after all.
+    static let abandonPause: TimeInterval = 2.5
     static let preRoll: TimeInterval = 0.1
     static let postRoll: TimeInterval = 0.16
     /// Before any audio: a quiet room.
@@ -94,10 +111,17 @@ struct PhraseDetector {
         }
         let now = time + Self.frameSeconds
         if now - lastSpeechEnd >= Self.pause {
+            // Too little said to stand alone: hold it for what comes next, unless the pause says nothing is coming.
+            if lastSpeechEnd - phraseStart < Self.minStandalone, now - lastSpeechEnd < Self.abandonPause {
+                return []
+            }
             return close(at: lastSpeechEnd + Self.postRoll)
         }
+        if now - phraseStart >= Self.hardMaxPhrase {
+            return cut(force: true)
+        }
         if now - phraseStart >= Self.maxPhrase {
-            return cut()
+            return cut(force: false)
         }
         return []
     }
@@ -111,10 +135,13 @@ struct PhraseDetector {
         return [phrase(from: start - Self.preRoll, to: end)]
     }
 
-    /// A phrase too long for one reading is cut at its quietest 100 ms between 6 s and the present.
-    private mutating func cut() -> [Phrase] {
+    /// A phrase too long for one reading is cut at its quietest 100 ms between `cutAfter` and the present — but only
+    /// where that moment is a real gap between words (`quietEnough` over the room's noise). Someone speaking without
+    /// pausing has no such moment: the phrase is left to grow until `hardMaxPhrase`, when `force` cuts it anyway,
+    /// rather than slicing through the middle of a word.
+    private mutating func cut(force: Bool) -> [Phrase] {
         guard let start = phraseStart else { return [] }
-        let first = frameIndex(start + 6)
+        let first = frameIndex(start + Self.cutAfter)
         let last = bufferLevels.count - 5
         var quietest = last
         var lowest = Double.infinity
@@ -127,6 +154,7 @@ struct PhraseDetector {
                 }
             }
         }
+        guard force || lowest <= noise + Self.quietEnough else { return [] }
         let at = bufferStart + Double(quietest) * Self.frameSeconds
         let result = phrase(from: start - Self.preRoll, to: at)
         dropBuffer(before: at)
